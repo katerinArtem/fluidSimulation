@@ -36,6 +36,15 @@ REL     = 1.8
 PAR1    = 1
 PAR2    = 1
 
+# Number of Gauss–Seidel sweeps per physics step
+INCOMPRESSIBILITY_ITERATIONS = 10
+
+# Default smoke density in an empty cell
+DEFAULT_SMOKE = 0.7
+
+# Pressure written into solid cells by `set_walls`
+WALL_PRESSURE = 10.0
+
 # --- Optimisation (imported by phisics.py!) ---------------------------------
 PARALLEL = False
 CASHE    = False
