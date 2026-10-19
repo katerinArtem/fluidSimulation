@@ -7,7 +7,7 @@ import numpy as np
 import pygame
 
 from config import (
-    BLACK, CELL_C, DIST, DT_SCALE, FPS, HEIGHT, PADD, VIOLET, WIDTH, VEL_SCALE, INCOMPRESSIBILITY_ITERATIONS
+    BLACK, CELL_C, DIST, DT_SCALE, FPS, HEIGHT, PADD, VIOLET, WIDTH, VEL_SCALE, INCOMPRESSIBILITY_ITERATIONS, SMOKE_DT_SCALE
 )
 from phisics import Phisics
 from render import Render
@@ -119,24 +119,13 @@ def apply_continuous_input() -> None:
 
 # --- Physics -----------------------------------------------------------------
 def step_physics(dt: float) -> None:
-    # 1. Start each frame with an empty pressure field.
-    Phisics.zero_pressure()
-
-    # 2. Solve for the pressure that makes the velocity field
-    #    divergence-free (Gauss–Seidel sweeps).
-    Phisics.incompressibility(INCOMPRESSIBILITY_ITERATIONS, dt)
-
-    # 3. Advection uses a scaled dt for visual tuning.
-    advection_dt = dt * DT_SCALE
-
-    # 4. Record the pressure range for the renderer.
+    # ВАЖНО:
+    #  * zero_pressure() больше НЕ вызываем — в SIMPLE P персистентно.
+    #  * dt — «сырой» шаг, БЕЗ DT_SCALE.
+    #  * дым адвектится с dt*SMOKE_DT_SCALE (в 10x быстрее, как раньше).
+    Phisics.step(dt)
     Phisics.calc_val_mimamax()
-
-    # 5. Move the velocity field along itself (semi-Lagrangian).
-    Phisics.advection(advection_dt)
-
-    # 6. Move the smoke along the (already-updated) velocity field.
-    Phisics.advect_smoke(advection_dt)
+    Phisics.advect_smoke(dt * SMOKE_DT_SCALE)
 
 
 # --- Rendering ---------------------------------------------------------------
