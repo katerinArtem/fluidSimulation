@@ -96,7 +96,7 @@ def avgV(i, k, V):
 nb.set_num_threads(8)
 
 @njit(parallel=True, cache=True, fastmath=True)
-def _momentum_predictor_nb(U, V, P, W, dt, v_max, h, RHO, NU_EFF):
+def _momentum_predictor_nb(U, V, P, W, M, dt, v_max, h, RHO, NU_EFF, BUOYANCY):
     n_i, n_k = U.shape
     U_star = U.copy()
     V_star = V.copy()
@@ -150,7 +150,10 @@ def _momentum_predictor_nb(U, V, P, W, dt, v_max, h, RHO, NU_EFF):
                 visc = NU_EFF * (V[i-1,k] + V[i+1,k] + V[i,k-1] + V[i,k+1]
                                  - 4.0 * V[i, k]) / (h * h)
 
-                val = V[i, k] + dt * (conv + pres + visc)
+                m_face = 0.5 * (M[i - 1, k] + M[i, k])
+                buoy = BUOYANCY * m_face
+
+                val = V[i, k] + dt * (conv + pres + visc + buoy)
                 if val >= v_max:
                     V_star[i, k] = v_max
                 elif val <= -v_max:
@@ -161,8 +164,9 @@ def _momentum_predictor_nb(U, V, P, W, dt, v_max, h, RHO, NU_EFF):
     return U_star, V_star
 
 
-def _momentum_predictor(U, V, P, W, dt, v_max):
-    return _momentum_predictor_nb(U, V, P, W, dt, v_max, DIST, RHO, NU_EFF)
+def _momentum_predictor(U, V, P, W, M, dt, v_max):
+    return _momentum_predictor_nb(U, V, P, W, M, dt, v_max,
+                                  DIST, RHO, NU_EFF, BUOYANCY)
 
 
 # =============================================================================
@@ -330,12 +334,38 @@ class Phisics:
             Phisics.P[i, k] += am
 
     @staticmethod
-    def apply_force(px, py, u, v):
+    def apply_const_force(px, py, u, v):
         x, y = pxy_xy(px, py)
         i, k = int(y), int(x)
         if 0 <= i < CELL_C and 0 <= k < CELL_C and not Phisics.W[i, k]:
             Phisics.U[i, k] += u
             Phisics.V[i, k] += v
+
+    """
+        Тянем U,V к целевой (u,v) по кисти.
+        При удержании скорость асимптотически подходит к (u,v),
+        но НИКОГДА её не превышает — положительной обратной связи нет.
+        rate=0.25 → 63% от целевой за ~4 кадра.
+    """
+    @staticmethod
+    def apply_force(px, py, u, v, radius=2.5, rate=0.25):
+        x, y = pxy_xy(px, py)
+        ci, ck = int(y), int(x)
+        r = int(np.ceil(radius))
+        r2 = radius * radius
+        for di in range(-r, r + 1):
+            for dk in range(-r, r + 1):
+                i, k = ci + di, ck + dk
+                if not (0 <= i < CELL_C and 0 <= k < CELL_C):
+                    continue
+                if Phisics.W[i, k]:
+                    continue
+                d2 = di * di + dk * dk
+                if d2 > r2:
+                    continue
+                w = 1.0 - d2 / r2
+                Phisics.U[i, k] += (u - Phisics.U[i, k]) * rate * w
+                Phisics.V[i, k] += (v - Phisics.V[i, k]) * rate * w
 
     @staticmethod
     def spawn_smoke(px, py, am):
@@ -353,11 +383,13 @@ class Phisics:
 
     @staticmethod
     def step(dt):
-        v_max = CFL_MAX * DIST / (dt * SMOKE_DT_SCALE)
+        # v_max = CFL_MAX * DIST / (dt * SMOKE_DT_SCALE)
+        v_max = CFL_MAX * DIST / (dt)
+        
 
         # 1) momentum predictor — FVM+upwind (parallel)
         U_star, V_star = _momentum_predictor(
-            Phisics.U, Phisics.V, Phisics.P, Phisics.W, dt, v_max,
+            Phisics.U, Phisics.V, Phisics.P, Phisics.W, Phisics.M, dt, v_max,
         )
 
         # 2) pressure correction — red-black GS (parallel внутри цвета)
@@ -377,7 +409,15 @@ class Phisics:
 
     @staticmethod
     def advect_smoke(dt):
-        Phisics.M = _advect_smoke(Phisics.M, Phisics.U, Phisics.V, Phisics.W, dt)
+        vmax = max(float(np.max(np.abs(Phisics.U))),
+                float(np.max(np.abs(Phisics.V))))
+        n_sub = max(1, int(np.ceil(vmax * dt / DIST)))
+        n_sub = min(n_sub, 40)
+        sub = dt / n_sub
+        for _ in range(n_sub):
+            Phisics.M = _advect_smoke(
+                Phisics.M, Phisics.U, Phisics.V, Phisics.W, sub
+            )
 
     @staticmethod
     def calc_val_mimamax():

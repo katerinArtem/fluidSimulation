@@ -206,11 +206,10 @@ class Render:
     @staticmethod
     def smoke_grid(canvas, M):
         n = M.shape[0]
-        m_clip = np.clip(M, 0.0, 1.0)
-        alpha_u8 = np.where(
-            M < 0.01, 0,
-            np.clip(m_clip * 220, 0, 255).astype(np.uint8),
-        )
+        # гамма < 1 — слабые значения становятся видимыми
+        alpha_f = np.power(np.clip(M, 0.0, 1.0), 0.55)
+        alpha_u8 = (alpha_f * 255.0).astype(np.uint8)
+        alpha_u8[M < 0.0015] = 0          # очень слабый шум всё же режем
 
         rgba = np.empty((n, n, 4), dtype=np.uint8)
         rgba[..., 0] = 255

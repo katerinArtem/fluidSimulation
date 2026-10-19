@@ -114,6 +114,9 @@ def apply_continuous_input() -> None:
     if App.right_held:
         _safe(Phisics.apply_pres, mx, my, 10)
     if App.middle_held:
+        _safe(Phisics.spawn_smoke, mx+1, my, 1)
+        _safe(Phisics.spawn_smoke, mx, my+1, 1)
+        _safe(Phisics.spawn_smoke, mx+1, my+1, 1)
         _safe(Phisics.spawn_smoke, mx, my, 1)
 
 
@@ -123,6 +126,7 @@ def step_physics(dt: float) -> None:
     #  * zero_pressure() больше НЕ вызываем — в SIMPLE P персистентно.
     #  * dt — «сырой» шаг, БЕЗ DT_SCALE.
     #  * дым адвектится с dt*SMOKE_DT_SCALE (в 10x быстрее, как раньше).
+    apply_continuous_input()
     Phisics.step(dt)
     Phisics.calc_val_mimamax()
     Phisics.advect_smoke(dt * SMOKE_DT_SCALE)
@@ -156,7 +160,6 @@ def loop(clock: pygame.time.Clock) -> None:
         dt = 1.0 / max(tick_ms, 1)         # matches original `1 / tick_ms`
 
         handle_events()
-        apply_continuous_input()
         if not App.paused:
             step_physics(dt)
         render()
