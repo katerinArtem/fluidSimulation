@@ -1,146 +1,126 @@
-from config import *
-from pygame.rect import Rect
-from pygame import draw
+"""Rendering helpers for the fluid simulation."""
 import numpy as np
-from numba import jit, njit
-from phisics import Phisics,sampleU,sampleV,avgU,avgV
+import pygame
+from pygame.rect import Rect
+
+from config import (
+    CELL_C, CELL_INDICES, GRAY, GREEN, HEIGHT, PADD, PDIST, WIDTH, xy_pxy,
+)
+from phisics import Phisics, avgV, sampleU, sampleV
+
 
 class Render:
+    # --- Color helpers ------------------------------------------------------
+    @staticmethod
+    def _sci_color_unit(val, min_val, max_val):
+        """Map val in [min_val, max_val] -> (r, g, b), each a float in [0, 1]."""
+        val = min(max(val, min_val), max_val - 1e-4)
+        d = max_val - min_val
+        t = 0.5 if d == 0 else (val - min_val) / d
 
-    L:list[list[float]] = []
+        segment = 0.25
+        num = int(t / segment)
+        s = (t - num * segment) / segment
 
-    def obj(canvas):
-        for l in Render.L:
-            x = l[0]
-            y = l[1]
-            u = l[2]
-            v = l[3]
-            color = l[4]
-            Render.vector(canvas,color,x+2/PDIST,y+2/PDIST,u+2/PDIST,v+2/PDIST)
+        if num == 0:
+            return 0.0, float(s), 1.0
+        if num == 1:
+            return 0.0, 1.0, float(1.0 - s)
+        if num == 2:
+            return float(s), 1.0, 0.0
+        return 1.0, float(1.0 - s), 0.0
 
-    def clear_obj():
-        Render.L.clear()
+    # --- Primitives ---------------------------------------------------------
+    @staticmethod
+    def vector(canvas, color, x, y, u=0.0, v=0.0):
+        px, py = xy_pxy(x, y)
+        pygame.draw.line(
+            canvas, color,
+            (int(px + PADD), int(py + PADD)),
+            (int(px + u * PDIST + PADD), int(py - v * PDIST + PADD)),
+        )
 
-    def get_sci_color(val, minVal, maxVal):
-        val = min(max(val, minVal), maxVal- 0.0001)
-        d = maxVal - minVal
-        val =  0.5 if d == 0 else (val - minVal) / d  
-        m = 0.25
-        num = int(val / m)
-        s = (val - num * m) / m
-        r, g, b = 0,0,0
-            
-        match(num):
-            case 0:r,g,b = 0,s,1
-            case 1:r,g,b = 0,1,1-s
-            case 2:r,g,b = s,1,0
-            case 3:r,g,b = 1,1-s,0
+    @staticmethod
+    def cell(canvas, color, x, y):
+        pygame.draw.rect(canvas, color, Rect(x + PADD, y + PADD, PDIST, PDIST))
 
-        return (255*r,255*g,255*b)
-	
-    def UV_field(canvas,color,U,V):
-        for i in ITER_L:
-            for k in ITER_L:
-                Render.vector(canvas=canvas,color=color,x=k,y=i+0.5,u=U[i,k],v=0)
-                Render.vector(canvas=canvas,color=color,x=k+0.5,y=i,u=0,v=V[i,k])
-                   
-    def U_field_stream(canvas,color,U,V):
-        V = Phisics.V
-        U = Phisics.U
-        W = Phisics.W
-        for i in np.arange(1,CELL_C):
-            for k in np.arange(1,CELL_C):
-                if W[i,k]:continue
-                cx,cy = k,i + 0.5
-                v = avgV(i,k,V)*0.2
-                u = U[i,k]*0.2
-                Render.vector(canvas=canvas,color=color,x=k,y=i+0.5,u=-u,v=-v)
-                ux,uy = cx - U[i,k],cy - v
-                v = sampleV(ux,uy,V)
-                u = sampleU(ux,uy,U)
-                Render.vector(canvas=canvas,color=color,x=ux,y=uy,u=-u,v=-v)
-                ux,uy = cx - u,cy - v
-                v = sampleV(ux,uy,V)
-                u = sampleU(ux,uy,U)
-                Render.vector(canvas=canvas,color=color,x=ux,y=uy,u=-u,v=-v)
-                
-    def calc_color_field(P,min_p,max_p):
-        C = np.full((CELL_C,CELL_C,3), 0, dtype=np.float64)
-        #print(max_p,min_p)
-        for i in np.arange(CELL_C):
-            for k in np.arange(CELL_C):
-                val = min(max(P[i,k], min_p), max_p- 0.0001)
-                d = max_p - min_p
-                val = 0.5 if d == 0 else (val - min_p) / d  
-                m = 0.25
-                num = int(val / m)
-                s = (val - num * m) / m
-                r, g, b = 0,0,0
-                    
-                match(num):
-                    case 0:r,g,b = 0,s,1
-                    case 1:r,g,b = 0,1,1-s
-                    case 2:r,g,b = s,1,0
-                    case 3:r,g,b = 1,1-s,0
+    @staticmethod
+    def wall(canvas, color, x, y):
+        pad = PADD + PDIST / 2 - PDIST / 8
+        pygame.draw.rect(
+            canvas, color, Rect(x + pad, y + pad, PDIST / 4, PDIST / 4),
+        )
 
-                C[i,k,0] = 200*r
-                C[i,k,1] = 90*g
-                C[i,k,2] = 254*b
-        return C
-
-    def pres_grid(canvas,P,min_p,max_p):
-        C = Render.calc_color_field(P,min_p,max_p)
-        for i in ITER_L:
-            for k in ITER_L:
-                color = BLACK
-                pxy =  xy_pxy(k,i+1)
-                color = (C[i,k,0],C[i,k,1],C[i,k,2])
-                Render.cell(canvas,color,pxy[0],pxy[1])
-
-    def smoke_grid(canvas,M):
-        for i in ITER_L:
-            for k in ITER_L:
-                color = BLACK
-                pxy =  xy_pxy(k,i+1)
-                nm = M[i,k]
-                color = ((nm*255),(nm*255),(nm*255))
-                Render.cell(canvas,color,pxy[0],pxy[1])
-
-    def wals(canvas,W):
-        for i in ITER_L:
-            for k in ITER_L:
-                if W[i,k] == True:
-                    pxy =  xy_pxy(k,i+1)
-                    color = ((120),(120),(120))
-                    Render.wall(canvas,color,pxy[0],pxy[1])
-     
-
-    def vector(canvas,color,x,y,u=0,v=0):
-        pxy = xy_pxy(x,y)
-        px = pxy[0]
-        py = pxy[1]
-        pu = u*PDIST
-        pv = -v*PDIST
-        draw.line(canvas,color=color,start_pos=(px+PADD,py+PADD),end_pos=(px+pu+PADD,py+pv+PADD))
-
-    def cell(canvas,color,x,y):
-        draw.rect(surface=canvas,color=color,rect=Rect(x+PADD,y+PADD,PDIST,PDIST))
-
-    def wall(canvas,color,x,y):
-        padd = +PADD+PDIST/2-PDIST/8
-        draw.rect(surface=canvas,color=color,rect=Rect(x+padd,y+padd,PDIST/4,PDIST/4))
-    
+    @staticmethod
     def grid(canvas):
-        for px in range(0,WIDTH+int(PDIST),int(PDIST)):
-            draw.line(canvas,color=GREEN,start_pos=[px+PADD,0+PADD],end_pos=[px+PADD,HEIGHT+PADD])
-        for py in range(0,HEIGHT+int(PDIST),int(PDIST)):
-            draw.line(canvas,color=GREEN,start_pos=[0+PADD,py+PADD],end_pos=[WIDTH+PADD,py+PADD])
+        for px in range(0, WIDTH + int(PDIST), int(PDIST)):
+            pygame.draw.line(canvas, GREEN,
+                             (px + PADD, PADD), (px + PADD, HEIGHT + PADD))
+        for py in range(0, HEIGHT + int(PDIST), int(PDIST)):
+            pygame.draw.line(canvas, GREEN,
+                             (PADD, py + PADD), (WIDTH + PADD, py + PADD))
 
-    
+    # --- Fields -------------------------------------------------------------
+    @staticmethod
+    def pres_grid(canvas, P, min_p, max_p):
+        for i in CELL_INDICES:
+            for k in CELL_INDICES:
+                r, g, b = Render._sci_color_unit(P[i, k], min_p, max_p)
+                color = int(200 * r), int(90 * g), int(254 * b)
+                px, py = xy_pxy(k, i + 1)
+                Render.cell(canvas, color, px, py)
 
+    @staticmethod
+    def smoke_grid(canvas, M):
+        # semi-transparent white overlay: 0 → прозрачно, 1 → почти белый
+        overlay = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
+        for i in CELL_INDICES:
+            for k in CELL_INDICES:
+                m = float(M[i, k])
+                if m < 0.01:
+                    continue
+                m = min(1.0, m)
+                alpha = int(220 * m)
+                px, py = xy_pxy(k, i + 1)
+                pygame.draw.rect(
+                    overlay, (255, 255, 255, alpha),
+                    Rect(px + PADD, py + PADD, PDIST, PDIST),
+                )
+        canvas.blit(overlay, (0, 0))
 
+    @staticmethod
+    def walls(canvas, W):
+        for i in CELL_INDICES:
+            for k in CELL_INDICES:
+                if W[i, k]:
+                    px, py = xy_pxy(k, i + 1)
+                    Render.wall(canvas, GRAY, px, py)
 
+    @staticmethod
+    def UV_field(canvas, color, U, V):
+        for i in CELL_INDICES:
+            for k in CELL_INDICES:
+                Render.vector(canvas, color, k, i + 0.5, u=U[i, k], v=0.0)
+                Render.vector(canvas, color, k + 0.5, i, u=0.0, v=V[i, k])
 
+    @staticmethod
+    def U_field_stream(canvas, color, U, V):
+        W = Phisics.W
+        for i in np.arange(1, CELL_C):
+            for k in np.arange(1, CELL_C):
+                if W[i, k]:
+                    continue
+                cx, cy = k, i + 0.5
+                v = avgV(i, k, V) * 0.2
+                u = U[i, k] * 0.2
+                Render.vector(canvas, color, k, i + 0.5, u=-u, v=-v)
 
+                ux, uy = cx - U[i, k], cy - v
+                v = sampleV(ux, uy, V)
+                u = sampleU(ux, uy, U)
+                Render.vector(canvas, color, ux, uy, u=-u, v=-v)
 
-
+                ux, uy = cx - u, cy - v
+                v = sampleV(ux, uy, V)
+                u = sampleU(ux, uy, U)
+                Render.vector(canvas, color, ux, uy, u=-u, v=-v)
