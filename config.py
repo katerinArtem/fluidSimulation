@@ -1,12 +1,29 @@
 """Configuration constants for the fluid simulation."""
+# --- Resolution preset -------------------------------------------------------
+# "default" - 48 cells, 15 px/cell, window 720x720  (original)
+# "high"    - 96 cells, 7.5 px/cell, window 720x720 (2x detail, same area)
+# "big"     - 96 cells, 15 px/cell,  window 1440x1440 (2x domain, same detail)
+# "ultra"   - 144 cells, 5 px/cell,  window 720x720 (3x detail, same area)
+PRESET = "high"
+
+PRESETS: dict[str, dict[str, float]] = {
+    "default": dict(CELL_C=48,  CELL_PX=15.0, VEL_SCALE=1.0),
+    "high":    dict(CELL_C=96,  CELL_PX=7.5,  VEL_SCALE=2.0),
+    "big":     dict(CELL_C=96,  CELL_PX=15.0, VEL_SCALE=1.0),
+    "ultra":   dict(CELL_C=144, CELL_PX=5.0,  VEL_SCALE=3.0),
+}
+
+_preset = PRESETS[PRESET]
+CELL_C    = int(_preset["CELL_C"]) # cells per side of the simulation grid
+CELL_PX   = float(_preset["CELL_PX"])
+VEL_SCALE = float(_preset["VEL_SCALE"])
 
 # --- Grid geometry ----------------------------------------------------------
-CELL_C = 48                     # cells per side of the simulation grid
-WIDTH  = 720                    # simulation width in pixels
-HEIGHT = 720                    # simulation height in pixels
-PDIST  = WIDTH / CELL_C         # pixel size of one cell (float)
-PADD   = PDIST                  # border around the sim area (one cell)
-DIST   = CELL_C / CELL_C        # = 1.0, used in phisics.opt_incompressibility
+WIDTH  = CELL_C * CELL_PX # simulation width in pixels
+HEIGHT = WIDTH # simulation height in pixels
+PDIST  = CELL_PX # pixel size of one cell (float)
+PADD   = PDIST # border around the sim area (one cell)
+DIST   = 1.0   # CELL_C / CELL_C  = 1.0, used in phisics.opt_incompressibility
 
 # --- Loop -------------------------------------------------------------------
 FPS      = 15

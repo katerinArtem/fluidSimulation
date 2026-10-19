@@ -32,33 +32,38 @@ class Render:
 
     # --- Primitives ---------------------------------------------------------
     @staticmethod
+    def _cell_rect(x: float, y: float) -> Rect:
+        x0, y0 = round(x + PADD), round(y + PADD)
+        x1, y1 = round(x + PADD + PDIST), round(y + PADD + PDIST)
+        return Rect(x0, y0, x1 - x0, y1 - y0)
+    
+    @staticmethod
     def vector(canvas, color, x, y, u=0.0, v=0.0):
         px, py = xy_pxy(x, y)
         pygame.draw.line(
             canvas, color,
-            (int(px + PADD), int(py + PADD)),
-            (int(px + u * PDIST + PADD), int(py - v * PDIST + PADD)),
+            (round(px + PADD), round(py + PADD)),
+            (round(px + u * PDIST + PADD), round(py - v * PDIST + PADD)),
         )
 
     @staticmethod
     def cell(canvas, color, x, y):
-        pygame.draw.rect(canvas, color, Rect(x + PADD, y + PADD, PDIST, PDIST))
+        pygame.draw.rect(canvas, color, Render._cell_rect(x, y))
 
     @staticmethod
     def wall(canvas, color, x, y):
-        pad = PADD + PDIST / 2 - PDIST / 8
-        pygame.draw.rect(
-            canvas, color, Rect(x + pad, y + pad, PDIST / 4, PDIST / 4),
-        )
+        pad  = PADD + PDIST * 3 / 8
+        side = PDIST / 4
+        x0, y0 = round(x + pad), round(y + pad)
+        x1, y1 = round(x + pad + side), round(y + pad + side)
+        pygame.draw.rect(canvas, color, Rect(x0, y0, x1 - x0, y1 - y0))
 
     @staticmethod
     def grid(canvas):
-        for px in range(0, WIDTH + int(PDIST), int(PDIST)):
-            pygame.draw.line(canvas, GREEN,
-                             (px + PADD, PADD), (px + PADD, HEIGHT + PADD))
-        for py in range(0, HEIGHT + int(PDIST), int(PDIST)):
-            pygame.draw.line(canvas, GREEN,
-                             (PADD, py + PADD), (WIDTH + PADD, py + PADD))
+        for idx in range(CELL_C + 1):
+            px = idx * PDIST + PADD
+            pygame.draw.line(canvas, GREEN, (px, PADD), (px, HEIGHT + PADD))
+            pygame.draw.line(canvas, GREEN, (PADD, px), (WIDTH + PADD, px))
 
     # --- Fields -------------------------------------------------------------
     @staticmethod
@@ -72,7 +77,6 @@ class Render:
 
     @staticmethod
     def smoke_grid(canvas, M):
-        # semi-transparent white overlay: 0 → прозрачно, 1 → почти белый
         overlay = pygame.Surface(canvas.get_size(), pygame.SRCALPHA)
         for i in CELL_INDICES:
             for k in CELL_INDICES:
@@ -83,8 +87,9 @@ class Render:
                 alpha = int(220 * m)
                 px, py = xy_pxy(k, i + 1)
                 pygame.draw.rect(
-                    overlay, (255, 255, 255, alpha),
-                    Rect(px + PADD, py + PADD, PDIST, PDIST),
+                    overlay,
+                    (255, 255, 255, alpha),
+                    Render._cell_rect(px, py),    
                 )
         canvas.blit(overlay, (0, 0))
 
