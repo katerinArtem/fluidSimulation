@@ -46,8 +46,8 @@ def _sci_color_array(t):
 
 def _vec_sampleU(x, y, U):
     n = U.shape[0]
-    x = np.clip(x, 1, n - 1)
-    y = np.clip(y, 1, n - 1)
+    x = np.clip(x, 1, n - 2)
+    y = np.clip(y, 1, n - 2)
     col = x.astype(np.int64)
     row = y.astype(np.int64)
     dy = (y >= row + 0.5).astype(np.int64)
@@ -63,8 +63,8 @@ def _vec_sampleU(x, y, U):
 
 def _vec_sampleV(x, y, V):
     n = V.shape[0]
-    x = np.clip(x, 1, n - 1)
-    y = np.clip(y, 1, n - 1)
+    x = np.clip(x, 1, n - 2)
+    y = np.clip(y, 1, n - 2)
     col = x.astype(np.int64)
     row = y.astype(np.int64)
     dx = np.where(x >= col + 0.5, 0.5, -0.5)
@@ -207,7 +207,7 @@ class Render:
     def smoke_grid(canvas, M):
         n = M.shape[0]
         # гамма < 1 — слабые значения становятся видимыми
-        alpha_f = np.power(np.clip(M, 0.0, 1.0), 0.55)
+        alpha_f = np.power(np.clip(M, 0.0, 1.0), 0.9)
         alpha_u8 = (alpha_f * 255.0).astype(np.uint8)
         alpha_u8[M < 0.0015] = 0          # очень слабый шум всё же режем
 

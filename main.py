@@ -7,7 +7,17 @@ import numpy as np
 import pygame
 
 from config import (
-    BLACK, CELL_C, DIST, DT_SCALE, FPS, HEIGHT, PADD, VIOLET, WIDTH, VEL_SCALE, INCOMPRESSIBILITY_ITERATIONS, SMOKE_DT_SCALE
+    BLACK,
+    CELL_C, 
+    DIST, 
+    DT_SCALE, 
+    FPS, 
+    HEIGHT, 
+    PADD, 
+    VIOLET, 
+    WIDTH, 
+    VEL_SCALE, 
+    SMOKE_DT_SCALE,
 )
 from phisics import Phisics
 from render import Render
@@ -110,7 +120,7 @@ def apply_continuous_input() -> None:
         return
     mx, my = mouse_pos_in_sim()
     if App.left_held:
-        _safe(Phisics.apply_force, mx, my, DIST * 20 * VEL_SCALE, 0.0)
+        _safe(Phisics.apply_force, mx, my, DIST * DT_SCALE * VEL_SCALE, 0.0)
     if App.right_held:
         _safe(Phisics.apply_pres, mx, my, 10)
     if App.middle_held:

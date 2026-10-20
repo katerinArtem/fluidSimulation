@@ -30,13 +30,14 @@ njit = nb.njit
 prange = nb.prange
 
 
+
 # =============================================================================
 # Интерполяция для рендера (совместимо со старым render.py)
 # =============================================================================
 
 def sampleU(x, y, U):
-    x = max(min(x, CELL_C - 1), 1)
-    y = max(min(y, CELL_C), 1)
+    x = max(min(x, CELL_C - 2), 1)
+    y = max(min(y, CELL_C - 1), 1)
     col, row = int(x), int(y)
     dy = 1 if y >= row + 0.5 else 0
     ty = row + 0.5 + dy
@@ -50,8 +51,8 @@ def sampleU(x, y, U):
 
 
 def sampleV(x, y, V):
-    x = max(min(x, CELL_C - 1), 1)
-    y = max(min(y, CELL_C - 1), 1)
+    x = max(min(x, CELL_C - 2), 1)
+    y = max(min(y, CELL_C - 2), 1)
     col, row = int(x), int(y)
     dx = 0.5 if x >= col + 0.5 else -0.5
     tx = col + dx; ty = row + 1; tk = int(tx)
@@ -259,7 +260,7 @@ def _correct_velocity(U_star, V_star, P_prime, W, dt):
 
 
 # =============================================================================
-# Перенос дыма — upwind-FVM, njit + parallel
+# Перенос дыма — Semi-Lagrangian, njit + parallel
 # =============================================================================
 
 @njit(parallel=True, cache=True, fastmath=True)
@@ -298,6 +299,8 @@ def _advect_smoke(M, U, V, W, dt):
 # =============================================================================
 
 class Phisics:
+    _boundary_instance = None
+
     U = np.zeros((CELL_C, CELL_C), dtype=np.float64)
     V = np.zeros((CELL_C, CELL_C), dtype=np.float64)
     W = np.zeros((CELL_C, CELL_C), dtype=np.bool_)
@@ -313,14 +316,33 @@ class Phisics:
     def zero_pressure():
         pass
 
+    # @staticmethod
+    # def set_walls():
+    #     for i in range(CELL_C):
+    #         for k in range(CELL_C):
+    #             on_border = (i < 1 or i > CELL_C - 2) or (k < 1 or k > CELL_C - 2)
+    #             if on_border:
+    #                 Phisics.W[i, k] = True
+    #                 Phisics.P[i, k] = WALL_PRESSURE
+
     @staticmethod
     def set_walls():
-        for i in range(CELL_C):
-            for k in range(CELL_C):
-                on_border = (i < 1 or i > CELL_C - 2) or (k < 1 or k > CELL_C - 2)
-                if on_border:
-                    Phisics.W[i, k] = True
-                    Phisics.P[i, k] = WALL_PRESSURE
+        # 1) Boundary: builds the border W-mask + ghost values for inlet/outlet.
+        Phisics._boundary_instance = BOUNDARIES[BOUNDARY_TYPE](**BOUNDARY_PARAMS)
+        Phisics._boundary_instance.setup(
+            Phisics.W, Phisics.U, Phisics.V, Phisics.P,
+        )
+        # 2) Interior obstacle: additional wall cells from a shape generator.
+        mask = SHAPES[SHAPE_TYPE](CELL_C, **SHAPE_PARAMS)
+        Phisics.W |= mask
+        Phisics.P[mask] = WALL_PRESSURE
+    
+    @staticmethod
+    def _apply_bcs():
+        if Phisics._boundary_instance is not None:
+            Phisics._boundary_instance.apply_ghosts(
+                Phisics.U, Phisics.V, Phisics.P, Phisics.M,
+            )
 
     # --- UI / инъекции ---------------------------------------------------
 
@@ -382,37 +404,61 @@ class Phisics:
     # --- Solver ----------------------------------------------------------
 
     @staticmethod
-    def step(dt):
-        # v_max = CFL_MAX * DIST / (dt * SMOKE_DT_SCALE)
-        v_max = CFL_MAX * DIST / (dt)
-        
+    def _single_step(dt, v_max):
+        Phisics._apply_bcs()
 
-        # 1) momentum predictor — FVM+upwind (parallel)
         U_star, V_star = _momentum_predictor(
             Phisics.U, Phisics.V, Phisics.P, Phisics.W, Phisics.M, dt, v_max,
         )
+        if Phisics._boundary_instance is not None:
+            Phisics._boundary_instance.post_predictor(U_star, V_star)
 
-        # 2) pressure correction — red-black GS (parallel внутри цвета)
         P_prime = _solve_pressure_correction(
             U_star, V_star, Phisics.W, dt, SIMPLE_ITER,
         )
-
-        # 3) velocity correction (parallel)
         U_corr, V_corr = _correct_velocity(
             U_star, V_star, P_prime, Phisics.W, dt,
         )
 
-        # 4) под-релаксация
         Phisics.U = ALPHA_U * U_corr + (1.0 - ALPHA_U) * Phisics.U
         Phisics.V = ALPHA_U * V_corr + (1.0 - ALPHA_U) * Phisics.V
         Phisics.P = Phisics.P + ALPHA_P * P_prime
+
+        Phisics._apply_bcs()
+
+    @staticmethod
+    def step(dt):
+        # характерная скорость для сабстеппинга: поле + inlet + защита от 0
+        vmax = max(
+            float(np.max(np.abs(Phisics.U))),
+            float(np.max(np.abs(Phisics.V))),
+            abs(BOUNDARY_PARAMS.get("inlet_u", 0.0)),
+            abs(BOUNDARY_PARAMS.get("inlet_v", 0.0)),
+            1e-3,
+        )
+        # 400 — предохранитель от вечного цикла, если поле внезапно взорвалось
+        n_sub  = max(1, min(int(np.ceil(vmax * dt / (CFL_MAX * DIST))), 400))
+        sub_dt = dt / n_sub
+
+        # потолок скорости в предикторе: 10× от inlet. Тоже инлайн, без новой переменной.
+        v_max = 10.0 * max(
+            abs(BOUNDARY_PARAMS.get("inlet_u", 1.0)),
+            abs(BOUNDARY_PARAMS.get("inlet_v", 1.0)),
+            1.0,
+        )
+
+        for _ in range(n_sub):
+            Phisics._single_step(sub_dt, v_max)
+
+
+    
 
     @staticmethod
     def advect_smoke(dt):
         vmax = max(float(np.max(np.abs(Phisics.U))),
                 float(np.max(np.abs(Phisics.V))))
         n_sub = max(1, int(np.ceil(vmax * dt / DIST)))
-        n_sub = min(n_sub, 40)
+        n_sub = min(n_sub, 400)
         sub = dt / n_sub
         for _ in range(n_sub):
             Phisics.M = _advect_smoke(
