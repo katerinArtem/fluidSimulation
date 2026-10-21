@@ -34,14 +34,18 @@ class Shapes:
         return np.zeros((n, n), dtype=bool)
 
     @staticmethod
-    def triangle_outline(n, apex=(0.5, 0.2), bl=(0.2, 0.75), br=(0.8, 0.75)):
-        """Hollow triangle (contour only)."""
+    def triangle_outline(n, apex=(0.5, 0.2), bl=(0.2, 0.8), br=(0.8, 0.8)):
+        """Hollow triangle (contour only). Координаты задаются как (X, Y) в долях от 0 до 1."""
         m = np.zeros((n, n), dtype=bool)
         for a, b in [(apex, bl), (apex, br), (bl, br)]:
-            ai, ak = int(a[0] * n), int(a[1] * n)
+            # a[0] - это X, a[1] - это Y
+            ai, ak = int(a[0] * n), int(a[1] * n) # ai = X (столбец), ak = Y (строка)
             bi, bk = int(b[0] * n), int(b[1] * n)
-            for i, k in _bresenham_line(ai, ak, bi, bk, n):
-                m[i, k] = True
+            
+            # Важно: передаем в Bresenham (X, Y), но в массив пишем m[Y, X]
+            for x, y in _bresenham_line(ai, ak, bi, bk, n):
+                # Защита от выхода за границы, если координата равна ровно 1.0
+                m[min(y, n-1), min(x, n-1)] = True 
         return m
 
     @staticmethod

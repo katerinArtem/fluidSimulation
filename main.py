@@ -18,6 +18,8 @@ from config import (
     WIDTH, 
     VEL_SCALE, 
     SMOKE_DT_SCALE,
+    AUTO_PAUSE,
+    DISABLE_AUTO_PAUSE
 )
 from phisics import Phisics
 from render import Render
@@ -37,6 +39,10 @@ class App:
     left_held: bool = False
     right_held: bool = False
     middle_held: bool = False
+
+    # --- auto-pause ---
+    auto_pause_after: float = AUTO_PAUSE   # через сколько секунд ставить на паузу
+    time_left: float = AUTO_PAUSE          # сколько осталось до автопаузы
 
 
 canvas: pygame.Surface | None = None
@@ -65,6 +71,9 @@ def handle_key(key: int) -> None:
         App.running = False
     elif key == pygame.K_SPACE:
         App.paused = not App.paused
+        if not App.paused:
+            # сняли паузу → перезапускаем авто-паузу
+            App.time_left = App.auto_pause_after
     elif key in (pygame.K_r, pygame.K_d):
         init_scene()
     elif key == pygame.K_g:
@@ -150,8 +159,9 @@ def render() -> None:
     if App.show_pressure:
         Render.pres_grid(canvas, Phisics.P, Phisics.min_p, Phisics.max_p)
 
-    if App.show_smoke:                              
-        Render.smoke_grid(canvas, Phisics.M)
+    if App.show_smoke:        
+        Render.smoke_grid(canvas, Phisics.M, data_range=(0, 0.75), highlight_range=(0, 0.1), highlight_weight=2.0)                      
+        # Render.smoke_grid(canvas, Phisics.M)
 
     Render.walls(canvas, Phisics.W)
 
@@ -172,6 +182,13 @@ def loop(clock: pygame.time.Clock) -> None:
         handle_events()
         if not App.paused:
             step_physics(dt)
+
+            # таймер тикает только пока игра идёт
+            App.time_left -= tick_ms / AUTO_PAUSE
+            if App.time_left <= 0.0:
+                App.time_left = 0.0
+                App.paused = True and not DISABLE_AUTO_PAUSE
+
         render()
 
 

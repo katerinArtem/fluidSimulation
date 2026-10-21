@@ -94,7 +94,7 @@ def avgV(i, k, V):
 # Каждая клетка читает U,V,P,W (только «старые» значения) и пишет в
 # U_star,V_star по своим индексам. Гонок нет — prange безопасен.
 
-nb.set_num_threads(8)
+nb.set_num_threads(16)
 
 @njit(parallel=True, cache=True, fastmath=True)
 def _momentum_predictor_nb(U, V, P, W, M, dt, v_max, h, RHO, NU_EFF, BUOYANCY):
@@ -179,43 +179,64 @@ def _momentum_predictor(U, V, P, W, M, dt, v_max):
 # последовательность (одна итерация = обновить красные, потом чёрные).
 
 @njit(parallel=True, cache=True, fastmath=True)
-def _solve_pressure_correction_nb(U_star, V_star, W, dt, iterations,
-                                   h, RHO, OMEGA_GS):
+def _solve_pressure_correction_nb(U_star, V_star, W, dt, iterations, h, RHO, OMEGA_GS, bc_type):
     n_i, n_k = U_star.shape
     coeff = RHO * h / dt
     P_prime = np.zeros((n_i, n_k), dtype=np.float64)
 
     for _ in range(iterations):
         for color in range(2):
-            # Оптимизация: внутри prange по i сразу берём только k нужной
-            # чётности через step=2 — вдвое меньше итераций внутреннего цикла.
-            # k_start = 1, если нужна нечётная k, иначе 2.
             for i in prange(1, n_i - 1):
                 k_start = 2 - ((color + i) & 1)
                 for k in range(k_start, n_k - 1, 2):
-
                     if W[i, k]:
                         continue
 
-                    open_w = not W[i, k - 1]
-                    open_e = not W[i, k + 1]
-                    open_n = not W[i - 1, k]
-                    open_s = not W[i + 1, k]
-                    n_open = open_w + open_e + open_n + open_s
+                    # Дивергенция (поток)
+                    flux = 0.0
+                    if not W[i, k + 1]: flux += U_star[i, k + 1]
+                    if not W[i, k]:     flux -= U_star[i, k]
+                    if not W[i + 1, k]: flux += V_star[i + 1, k]
+                    if not W[i, k]:     flux -= V_star[i, k]
+
+                    # Лапласиан с учетом граничных условий
+                    s = 0.0
+                    n_open = 0
+
+                    # Западная граница (k-1)
+                    if not W[i, k - 1]:
+                        if k - 1 == 0 and bc_type == 1:
+                            s += P_prime[i, k] # Вход: Нейман (отражаем)
+                        else:
+                            s += P_prime[i, k - 1]
+                        n_open += 1
+
+                    # Восточная граница (k+1)
+                    if not W[i, k + 1]:
+                        if k + 1 == n_k - 1 and bc_type == 1:
+                            s += 0.0 # Выход: Дирихле (P'=0)
+                        else:
+                            s += P_prime[i, k + 1]
+                        n_open += 1
+
+                    # Северная граница (i-1)
+                    if not W[i - 1, k]:
+                        if i - 1 == 0 and bc_type == 2:
+                            s += P_prime[i, k] # Вход: Нейман
+                        else:
+                            s += P_prime[i - 1, k]
+                        n_open += 1
+
+                    # Южная граница (i+1)
+                    if not W[i + 1, k]:
+                        if i + 1 == n_i - 1 and bc_type == 2:
+                            s += 0.0 # Выход: Дирихле
+                        else:
+                            s += P_prime[i + 1, k]
+                        n_open += 1
+
                     if n_open == 0:
                         continue
-
-                    flux = 0.0
-                    if open_e: flux += U_star[i, k + 1]
-                    if open_w: flux -= U_star[i, k]
-                    if open_s: flux += V_star[i + 1, k]
-                    if open_n: flux -= V_star[i, k]
-
-                    s = 0.0
-                    if open_w: s += P_prime[i, k - 1]
-                    if open_e: s += P_prime[i, k + 1]
-                    if open_n: s += P_prime[i - 1, k]
-                    if open_s: s += P_prime[i + 1, k]
 
                     P_gs = (s - coeff * flux) / n_open
                     P_prime[i, k] += OMEGA_GS * (P_gs - P_prime[i, k])
@@ -223,9 +244,9 @@ def _solve_pressure_correction_nb(U_star, V_star, W, dt, iterations,
     return P_prime
 
 
-def _solve_pressure_correction(U_star, V_star, W, dt, iterations):
+def _solve_pressure_correction(U_star, V_star, W, dt, iterations, bc_type):
     return _solve_pressure_correction_nb(
-        U_star, V_star, W, dt, iterations, DIST, RHO, OMEGA_GS,
+        U_star, V_star, W, dt, iterations, DIST, RHO, OMEGA_GS, bc_type,
     )
 
 
@@ -234,7 +255,7 @@ def _solve_pressure_correction(U_star, V_star, W, dt, iterations):
 # =============================================================================
 
 @njit(parallel=True, cache=True, fastmath=True)
-def _correct_velocity_nb(U_star, V_star, P_prime, W, dt, h, RHO):
+def _correct_velocity_nb(U_star, V_star, P_prime, W, dt, h, RHO, bc_type):
     n_i, n_k = U_star.shape
     factor = dt / (RHO * h)
     U_new = U_star.copy()
@@ -245,26 +266,47 @@ def _correct_velocity_nb(U_star, V_star, P_prime, W, dt, h, RHO):
             if W[i, k - 1] or W[i, k]:
                 U_new[i, k] = 0.0
             else:
-                U_new[i, k] = U_star[i, k] - factor * (P_prime[i, k] - P_prime[i, k - 1])
+                p_w = P_prime[i, k - 1]
+                if k - 1 == 0 and bc_type == 1:
+                    p_w = P_prime[i, k] # Вход: Нейман (градиент 0)
+                U_new[i, k] = U_star[i, k] - factor * (P_prime[i, k] - p_w)
 
             if W[i - 1, k] or W[i, k]:
                 V_new[i, k] = 0.0
             else:
-                V_new[i, k] = V_star[i, k] - factor * (P_prime[i, k] - P_prime[i - 1, k])
+                p_n = P_prime[i - 1, k]
+                if i - 1 == 0 and bc_type == 2:
+                    p_n = P_prime[i, k] # Вход: Нейман
+                V_new[i, k] = V_star[i, k] - factor * (P_prime[i, k] - p_n)
 
     return U_new, V_new
 
 
-def _correct_velocity(U_star, V_star, P_prime, W, dt):
-    return _correct_velocity_nb(U_star, V_star, P_prime, W, dt, DIST, RHO)
+def _correct_velocity(U_star, V_star, P_prime, W, dt, bc_type):
+    return _correct_velocity_nb(U_star, V_star, P_prime, W, dt, DIST, RHO, bc_type)
 
 
 # =============================================================================
 # Перенос дыма — Semi-Lagrangian, njit + parallel
 # =============================================================================
 
+# Вспомогательная функция для расчета phi (Numba встроит её прямо в цикл)
+@njit(inline='always')
+def _calc_phi(d_up, d_loc, limiter_type):
+    if d_up * d_loc > 1e-12:
+        r = d_loc / d_up
+        if limiter_type == 0:    # Minmod
+            return min(1.0, r)
+        elif limiter_type == 1:  # Superbee
+            return max(0.0, min(1.0, 2.0 * r), min(2.0, r))
+        elif limiter_type == 2:  # MC (Monotonized Central)
+            return max(0.0, min(2.0 * r, 0.5 * (1.0 + r), 2.0))
+        elif limiter_type == 3:  # Van Leer
+            return 2.0 * r / (1.0 + r)
+    return 0.0
+
 @njit(parallel=True, cache=True, fastmath=True)
-def _advect_smoke_nb(M, U, V, W, dt, h):
+def _advect_smoke_nb(M, U, V, W, dt, h, limiter_type):
     n_i, n_k = M.shape
     M_new = M.copy()
 
@@ -273,25 +315,65 @@ def _advect_smoke_nb(M, U, V, W, dt, h):
             if W[i, k]:
                 continue
 
-            u_w = U[i, k]
             u_e = U[i, k + 1]
+            u_w = U[i, k]
             v_n = V[i, k]
             v_s = V[i + 1, k]
 
-            M_w = M[i, k - 1] if u_w > 0 else M[i, k]
-            M_e = M[i, k]     if u_e > 0 else M[i, k + 1]
-            M_n = M[i - 1, k] if v_n > 0 else M[i, k]
-            M_s = M[i, k]     if v_s > 0 else M[i + 1, k]
+            # ---------- EAST ----------
+            if u_e >= 0.0:
+                m_up, m_dn = M[i, k], M[i, k + 1]
+                d_up = M[i, k] - M[i, k - 1]
+            else:
+                m_up, m_dn = M[i, k + 1], M[i, k]
+                d_up = (M[i, k + 2] - M[i, k + 1]) if k + 2 < n_k else 0.0
+            d_loc = m_dn - m_up
+            phi = _calc_phi(d_up, d_loc, limiter_type)
+            flux_e = u_e * (m_up + 0.5 * phi * d_loc)
 
-            flux = (u_e * M_e - u_w * M_w) + (v_s * M_s - v_n * M_n)
-            val = M[i, k] - (dt / h) * flux
+            # ---------- WEST ----------
+            if u_w >= 0.0:
+                m_up, m_dn = M[i, k - 1], M[i, k]
+                d_up = (M[i, k - 1] - M[i, k - 2]) if k - 2 >= 0 else 0.0
+            else:
+                m_up, m_dn = M[i, k], M[i, k - 1]
+                d_up = M[i, k + 1] - M[i, k]
+            d_loc = m_dn - m_up
+            phi = _calc_phi(d_up, d_loc, limiter_type)
+            flux_w = u_w * (m_up + 0.5 * phi * d_loc)
+
+            # ---------- NORTH ----------
+            if v_n >= 0.0:
+                m_up, m_dn = M[i - 1, k], M[i, k]
+                d_up = (M[i - 1, k] - M[i - 2, k]) if i - 2 >= 0 else 0.0
+            else:
+                m_up, m_dn = M[i, k], M[i - 1, k]
+                d_up = M[i + 1, k] - M[i, k]
+            d_loc = m_dn - m_up
+            phi = _calc_phi(d_up, d_loc, limiter_type)
+            flux_n = v_n * (m_up + 0.5 * phi * d_loc)
+
+            # ---------- SOUTH ----------
+            if v_s >= 0.0:
+                m_up, m_dn = M[i, k], M[i + 1, k]
+                d_up = M[i, k] - M[i - 1, k]
+            else:
+                m_up, m_dn = M[i + 1, k], M[i, k]
+                d_up = (M[i + 2, k] - M[i + 1, k]) if i + 2 < n_i else 0.0
+            d_loc = m_dn - m_up
+            phi = _calc_phi(d_up, d_loc, limiter_type)
+            flux_s = v_s * (m_up + 0.5 * phi * d_loc)
+
+            div_flux = (flux_e - flux_w) + (flux_s - flux_n)
+            val = M[i, k] - (dt / h) * div_flux
             M_new[i, k] = val if val > 0.0 else 0.0
 
     return M_new
 
 
+
 def _advect_smoke(M, U, V, W, dt):
-    return _advect_smoke_nb(M, U, V, W, dt, DIST)
+    return _advect_smoke_nb(M, U, V, W, dt, DIST, SMOKE_LIMITER)
 
 
 # =============================================================================
@@ -413,11 +495,15 @@ class Phisics:
         if Phisics._boundary_instance is not None:
             Phisics._boundary_instance.post_predictor(U_star, V_star)
 
+        bc_type = 0
+        if BOUNDARY_TYPE == "inlet_lowk_outhighk": bc_type = 1
+        elif BOUNDARY_TYPE == "inlet_lowi_outhighi": bc_type = 2
+
         P_prime = _solve_pressure_correction(
-            U_star, V_star, Phisics.W, dt, SIMPLE_ITER,
+            U_star, V_star, Phisics.W, dt, SIMPLE_ITER, bc_type,
         )
         U_corr, V_corr = _correct_velocity(
-            U_star, V_star, P_prime, Phisics.W, dt,
+            U_star, V_star, P_prime, Phisics.W, dt, bc_type,
         )
 
         Phisics.U = ALPHA_U * U_corr + (1.0 - ALPHA_U) * Phisics.U
@@ -441,7 +527,7 @@ class Phisics:
         sub_dt = dt / n_sub
 
         # потолок скорости в предикторе: 10× от inlet. Тоже инлайн, без новой переменной.
-        v_max = 10.0 * max(
+        v_max = 20.0 * max(
             abs(BOUNDARY_PARAMS.get("inlet_u", 1.0)),
             abs(BOUNDARY_PARAMS.get("inlet_v", 1.0)),
             1.0,
@@ -457,13 +543,14 @@ class Phisics:
     def advect_smoke(dt):
         vmax = max(float(np.max(np.abs(Phisics.U))),
                 float(np.max(np.abs(Phisics.V))))
-        n_sub = max(1, int(np.ceil(vmax * dt / DIST)))
-        n_sub = min(n_sub, 400)
+        n_sub = max(1, int(np.ceil(vmax * dt /(0.5 * DIST))))
+        n_sub = min(n_sub, 100)
         sub = dt / n_sub
         for _ in range(n_sub):
             Phisics.M = _advect_smoke(
                 Phisics.M, Phisics.U, Phisics.V, Phisics.W, sub
             )
+        Phisics.M *= 0.9995
 
     @staticmethod
     def calc_val_mimamax():

@@ -7,6 +7,7 @@ Interface:
 
 Ghost cells live at i/k = 0 or n-1; the solver never touches them.
 """
+import math
 import numpy as np
 
 
@@ -39,8 +40,12 @@ class InletLowKOutletHighK(BoundaryBase):
     """Inflow from k=0 side, outflow at k=n-1. Top/bottom are walls."""
     def __init__(self, inlet_u=0.5, inlet_p=0.0, outlet_p=0.0,
                  wall_pressure=10.0, inlet_smoke=1.0):          # ← +
-        self.u, self.ip, self.op, self.wp = inlet_u, inlet_p, outlet_p, wall_pressure
-        self.sm = inlet_smoke  
+        self.u = inlet_u
+        self.ip = inlet_p
+        self.op = outlet_p
+        self.wp = wall_pressure
+        self.sm = inlet_smoke
+        self.tick = 0
 
     def setup(self, W, U, V, P):
         n = W.shape[0]
@@ -48,7 +53,7 @@ class InletLowKOutletHighK(BoundaryBase):
             side = 0 < i < n - 1
             if side and k < 1:
                 W[i, k] = False
-                U[i, k] = self.u;  V[i, k] = 0.0;  P[i, k] = self.ip
+                U[i, k] = self.u;  V[i, k] = 0.0; # P[i, k] = self.ip
             elif side and k > n - 2:
                 W[i, k] = False
                 U[i, k] = 0.0;     V[i, k] = 0.0;  P[i, k] = self.op
@@ -58,9 +63,49 @@ class InletLowKOutletHighK(BoundaryBase):
 
     def apply_ghosts(self, U, V, P, M):
         n = U.shape[0]
+        self.tick += 1
+
+        # процентная маска: чётные индексы -> 0, нечётные -> self.sm
+        # smoke_gayzers = [40,
+        #                  5,10,5,10,5,10,5,
+        #                  5,10,5,10,5,10,
+        #                  40]
+        
+        # smoke_gayzers = [45,
+        #                  10,
+        #                  10,
+        #                  10,
+        #                  45]
+        
+        # Равномерный поток дыма
+        smoke_gayzers = [3, 1, 0, 1, 3] 
+
+        total = float(sum(smoke_gayzers)) or 1.0
+
+        # Границы полос в долях от n
+        boundaries = []
+        acc = 0.0
+        for w in smoke_gayzers:
+            acc += w
+            boundaries.append(acc / total)   # 0..1
+
+        # Собираем маску по строкам i
+        smoke_mask = [0.0] * n
+        band = 0
+        for i in range(n):
+            frac = i / n                     # где мы по вертикали, 0..1
+            while band < len(boundaries) - 1 and frac >= boundaries[band]:
+                band += 1
+            if band % 2 == 1:                # нечётная полоса -> гейзер
+                smoke_mask[i] = self.sm
+
+        # пульсяция скорости на входе
+        u_puls = self.u * (1.0 + 1 * math.sin(self.tick * 0.005))
+        # без пульсации
+        # u_puls = self.u
         for i in range(1, n - 1):
-            U[i, 0]   = self.u;      V[i, 0]   = 0.0
-            P[i, 0]   = self.ip;     M[i, 0]   = self.sm if i % 4 == 0 else 0.0
+            U[i, 0]   = u_puls;      V[i, 0]   = 0.0
+            P[i, 0]   = P[i, 1];     M[i, 0]   = smoke_mask[i]
             U[i, n-1] = U[i, n-2];   V[i, n-1] = V[i, n-2]
             P[i, n-1] = self.op;     M[i, n-1] = M[i, n-2]
 

@@ -3,18 +3,36 @@ from boundary import BOUNDARIES
 from shapes import SHAPES
 
 # --- Resolution preset -------------------------------------------------------
-# "default" - 48 cells, 15 px/cell, window 720x720  (original)
-# "high"    - 96 cells, 7.5 px/cell, window 720x720 (2x detail, same area)
-# "big"     - 96 cells, 15 px/cell,  window 1440x1440 (2x domain, same detail)
-# "ultra"   - 144 cells, 5 px/cell,  window 720x720 (3x detail, same area)
-PRESET = "ultra"
+# Window height = CELL_C * CELL_PX. Screen 1920x1200 → держим высоту ≤ 1080 px
+# (1080 + рамка окна/панель задач ≈ 1150, влезает с запасом).
+#
+# "default" - 48  cells, 15.0 px/cell, 720x720    (original)
+# "high"    - 96  cells, 7.5  px/cell, 720x720    (2x detail, same area)
+# "big"     - 96  cells, 15.0 px/cell, 1440x1440  (НЕ влезает в 1200 по высоте)
+# "ultra"   - 144 cells, 5.0  px/cell, 720x720    (3x detail, same area)
+#
+# --- новые (под высоту экрана) ---
+# "wide"    - 72  cells, 15.0 px/cell, 1080x1080  (1.5x domain, default detail)
+# "hd"      - 144 cells, 7.5  px/cell, 1080x1080  (3x domain, 2x detail)
+# "qhd"     - 192 cells, 5.0  px/cell, 960x960    (4x domain, 3x detail)
+# "uhd"     - 288 cells, 3.75 px/cell, 1080x1080  (6x domain, 4x detail)
+# "max"     - 360 cells, 3.0  px/cell, 1080x1080  (7.5x domain, 5x detail)
+PRESET = "qhd"
 
 PRESETS: dict[str, dict[str, float]] = {
     "default": dict(CELL_C=48,  CELL_PX=15.0, VEL_SCALE=1.0),
-    "high":    dict(CELL_C=96,  CELL_PX=7.5,  VEL_SCALE=2.0),
-    "big":     dict(CELL_C=96,  CELL_PX=15.0, VEL_SCALE=1.0),
-    "ultra":   dict(CELL_C=144, CELL_PX=5.0,  VEL_SCALE=3.0),
+    "high":    dict(CELL_C=96,  CELL_PX=7.5,  VEL_SCALE=1.0),
+    "big":     dict(CELL_C=96,  CELL_PX=15.0, VEL_SCALE=1.0),   # 1440 — обрезается
+    "ultra":   dict(CELL_C=144, CELL_PX=5.0,  VEL_SCALE=1.0),
+
+    "wide":    dict(CELL_C=72,  CELL_PX=15.0, VEL_SCALE=1.0),   # 1080
+    "hd":      dict(CELL_C=144, CELL_PX=7.5,  VEL_SCALE=1.0),   # 1080
+    "qhd":     dict(CELL_C=192, CELL_PX=5.0,  VEL_SCALE=1.0),   # 960
+    "uhd":     dict(CELL_C=288, CELL_PX=3.75, VEL_SCALE=1.0),   # 1080
+    "max":     dict(CELL_C=360, CELL_PX=3.0,  VEL_SCALE=1.0),   # 1080
 }
+
+
 
 _preset = PRESETS[PRESET]
 CELL_C    = int(_preset["CELL_C"]) # cells per side of the simulation grid
@@ -32,6 +50,9 @@ DIST   = 1.0   # CELL_C / CELL_C  = 1.0, used in phisics.opt_incompressibility
 FPS      = 60
 DT_SCALE = 1                   # matches the `dt *= 20` in the original main
 
+AUTO_PAUSE = FPS * 0.5 # кадров * секунд
+DISABLE_AUTO_PAUSE = True # выключена ли автопауза
+
 # --- Physics ----------------------------------------------------------------
 GRAVITY = 0.1
 DENSITY = 1
@@ -39,8 +60,6 @@ REL     = 1.8
 PAR1    = 1
 PAR2    = 1
 
-# Number of Gauss–Seidel sweeps per physics step
-INCOMPRESSIBILITY_ITERATIONS = 10
 
 # Default smoke density in an empty cell
 DEFAULT_SMOKE = 0.7
@@ -90,22 +109,25 @@ def pxy_xy(px: float, py: float) -> tuple[float, float]:
 # DENSITY из старого конфига = 1 — "игрушечные" единицы, отзывчиво на мышь.
 # Для настоящей воды поставь 1000 и увеличь амплитуды инъекций в 1000 раз.
 RHO = float(DENSITY)                     # плотность (в единицах сетки)
-NU_WATER  = 1.0e-6                       # кинематическая вязкость воды, м²/с
+NU_WATER  = 0.0001 * (144.0 / CELL_C)**2                      # кинематическая вязкость воды, м²/с
 NU_EFF    = max(NU_WATER, 1.0e-6)        # эффективная (визуальная) вязкость
                                          # нижний предел — для стабильности
 
 # --- Релаксация SIMPLE ------------------------------------------------------
-SIMPLE_ITER  = 400          # итераций Пуассона на поправку давления
-ALPHA_P      = 0.25        # релаксация P.  0.1-0.2 — давление "живёт" долго
+SIMPLE_ITER  = 70          # итераций Пуассона на поправку давления
+ALPHA_P      = 0.1        # релаксация P.  0.1-0.2 — давление "живёт" долго
                            # (кнопка мыши работает). >0.5 — съедается мгновенно.
 ALPHA_U      = 0.7         # релаксация U,V. 0.7-0.9.
-OMEGA_GS     = 1.9         # over-relaxation в Гаусс-Зейделе для Пуассона
+OMEGA_GS     = 1.8         # over-relaxation в Гаусс-Зейделе для Пуассона
 
 # --- Стабильность -----------------------------------------------------------
-CFL_MAX        = 0.6       # ограничение скорости (smoke-advection CFL < CFL_MAX)
-SMOKE_DT_SCALE = 10        # дым адвектится в 10x быстрее dt скоростного шага
+CFL_MAX        = 0.3       # ограничение скорости (smoke-advection CFL < CFL_MAX)
+SMOKE_DT_SCALE = 1        # дым адвектится в 10x быстрее dt скоростного шага
                            # (даёт визуально "быстрый" дым, как раньше)
-SMOKE_SUB_STEP = 400
+SMOKE_LIMITER = 0 #Minmod
+# SMOKE_LIMITER = 1 #Superbee
+# SMOKE_LIMITER = 2 #MC (Monotonized Central)
+# SMOKE_LIMITER = 3 #Van Leer
 
 # --- Амплитуды инъекций -----------------------------------------------------
 P_INJECT     = 10.0        # на клик/кадр в apply_pres (копится до P_INJECT/ALPHA_P)
@@ -116,15 +138,15 @@ SMOKE_INJECT = 1.0
 # REL, PAR1, PAR2, GRAVITY — больше не нужны ядру, но рендер/старые ключи
 # могут их тянуть. Оставляем как есть.
 
-BUOYANCY = 0.3   # подбирать 0.3 … 1.5
+BUOYANCY = 0.00   # подбирать 0.3 … 1.5
 
 # Which shape (see SHAPES registry) and its kwargs.
 SHAPE_TYPE   = "triangle_outline"
-SHAPE_PARAMS = dict(apex=(0.5, 0.25), bl=(0.2, 0.2), br=(0.8, 0.2))
+SHAPE_PARAMS = dict(apex=(0.1, 0.6), bl=(0.2, 0.8), br=(0.2, 0.2)) # (y,x)
 
 # Which boundary (see BOUNDARIES registry) and its kwargs.
 BOUNDARY_TYPE   = "inlet_lowk_outhighk"
-BOUNDARY_PARAMS = dict(inlet_u=32, inlet_p=0.0, outlet_p=0.0,inlet_smoke=1)
+BOUNDARY_PARAMS = dict(inlet_u=12, inlet_p=0.0, outlet_p=0.0,inlet_smoke=0.60)
 
 # # Закрытая коробка с кругом в центре:
 # SHAPE_TYPE = "circle_outline"; SHAPE_PARAMS = dict(radius=0.2)

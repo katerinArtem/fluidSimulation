@@ -203,19 +203,86 @@ class Render:
         surf = _to_surface_rgb(rgb)
         Render._blit_scaled(canvas, surf)
 
-    @staticmethod
-    def smoke_grid(canvas, M):
-        n = M.shape[0]
-        # гамма < 1 — слабые значения становятся видимыми
-        alpha_f = np.power(np.clip(M, 0.0, 1.0), 0.9)
-        alpha_u8 = (alpha_f * 255.0).astype(np.uint8)
-        alpha_u8[M < 0.0015] = 0          # очень слабый шум всё же режем
 
+    @staticmethod
+    def smoke_grid(canvas, M, data_range=None, highlight_range=(0, 1), highlight_weight=1.0):
+        """
+        Отрисовка сетки с выделением (растягиванием) определенного диапазона значений.
+        
+        :param canvas: Canvas для отрисовки
+        :param M: 2D numpy array со значениями
+        :param data_range: tuple (min_val, max_val). Глобальные границы данных. 
+                        Если None, берется min(M) и max(M).
+        :param highlight_range: tuple (h_min, h_max). Диапазон, который нужно "растянуть".
+                                Если None, используется обычное линейное распределение.
+        :param highlight_weight: float. Во сколько раз увеличить визуальное разрешение 
+                                в highlight_range по сравнению с остальным диапазоном.
+                                (2.0 = в 2 раза больше, 3.0 = в 3 раза и т.д.)
+        """
+        n = M.shape[0]
+        
+        # 1. Определяем глобальные границы данных
+        if data_range is not None:
+            d_min, d_max = data_range
+            if d_max <= d_min: d_max = d_min + 1e-6
+        else:
+            d_min, d_max = np.min(M), np.max(M)
+            if d_max == d_min: d_max = d_min + 1e-6
+
+        # Нормализуем данные в диапазон [0, 1]
+        x = np.clip((M - d_min) / (d_max - d_min), 0.0, 1.0)
+
+        # 2. Применяем кусочно-линейное преобразование
+        if highlight_range is None:
+            # Если диапазон не задан, просто используем нормализованные данные
+            alpha_f = x
+        else:
+            h_min, h_max = highlight_range
+            
+            # Переводим границы выделения в нормализованный вид [0, 1]
+            h_min_n = np.clip((h_min - d_min) / (d_max - d_min), 0.0, 1.0)
+            h_max_n = np.clip((h_max - d_min) / (d_max - d_min), 0.0, 1.0)
+            
+            # Считаем, какую долю визуального пространства (от 0 до 1) займет каждая часть
+            # Формула выводится из условия: V_in / (h_max_n - h_min_n) = weight * (V_out / h_min_n)
+            # и V_out + V_in = 1.0
+            denom = h_min_n + highlight_weight * (h_max_n - h_min_n)
+            v_out = h_min_n / denom if denom > 0 else 0.0  # Визуальное место ДО выделения
+            v_in = 1.0 - v_out                             # Визуальное место ВНУТРИ выделения
+            
+            alpha_f = np.zeros_like(x)
+            
+            # Зона 1: До выделенного диапазона (сжимаем)
+            mask1 = x < h_min_n
+            if h_min_n > 0:
+                alpha_f[mask1] = (x[mask1] / h_min_n) * v_out
+                
+            # Зона 2: Внутри выделенного диапазона (растягиваем)
+            mask2 = (x >= h_min_n) & (x <= h_max_n)
+            if h_max_n > h_min_n:
+                alpha_f[mask2] = v_out + ((x[mask2] - h_min_n) / (h_max_n - h_min_n)) * v_in
+            else:
+                alpha_f[mask2] = v_out
+                
+            # Зона 3: После выделенного диапазона (максимальная непрозрачность)
+            mask3 = x > h_max_n
+            alpha_f[mask3] = 1.0
+
+        # 3. Гамма-коррекция (опционально, как в оригинале, применяется поверх)
+        alpha_f = np.power(alpha_f, 1.0)
+        
+        # 4. Конвертация в uint8
+        alpha_u8 = (alpha_f * 255.0).astype(np.uint8)
+        
+        # Отсекаем совсем слабый шум (значения 1, 2, 3)
+        alpha_u8[alpha_u8 < 5] = 0
+
+        # 5. Сборка RGBA
         rgba = np.empty((n, n, 4), dtype=np.uint8)
-        rgba[..., 0] = 255
-        rgba[..., 1] = 255
-        rgba[..., 2] = 255
-        rgba[..., 3] = alpha_u8
+        rgba[..., 0] = 255  # R
+        rgba[..., 1] = 255  # G
+        rgba[..., 2] = 255  # B
+        rgba[..., 3] = alpha_u8  # A
 
         surf = _to_surface_rgba(rgba)
         Render._blit_scaled(canvas, surf)
