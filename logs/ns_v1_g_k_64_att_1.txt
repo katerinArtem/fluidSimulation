@@ -1,0 +1,55 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_g_k_64_att_1.txt
+# Started: 2026-10-29T23:13:08.764977
+# version=v1 solver=g case=k NX=64 NY=64 attempt=1
+#--------------------------------------------------------------------
+SIMPLE GPU (PyOpenCL) solver | NX=64 NY=64 | RE=40.0
+hx=0.02344 hy=0.01562 DT=1.953e-03 LAMBDA=-0.963741
+pressure: red-black SOR, PS_OMEGA=1.90645, batch=16
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters)  decay=xN per 100it  ETA = local extrap
+----------------------------------------------------------------------
+[   100] |duv|=9.313e-01  |div|=2.178e-04  t=   0.4s  ps_avg=102.9
+[   200] |duv|=5.322e-01  |div|=6.664e-05  t=   0.6s  decay=1.75x/100it  ETA=1122it (4s)  ps_avg=85.6/dn
+[   300] |duv|=3.641e-01  |div|=4.867e-05  t=   1.0s  decay=1.46x/100it  ETA=1554it (5s) (up)  ps_avg=85.4/=
+[   400] |duv|=2.509e-01  |div|=5.344e-05  t=   1.3s  decay=1.45x/100it  ETA=1483it (5s)  ps_avg=88.1/up
+[   500] |duv|=1.737e-01  |div|=4.829e-05  t=   1.6s  decay=1.44x/100it  ETA=1404it (5s)  ps_avg=89.7/up
+[   600] |duv|=1.205e-01  |div|=4.216e-05  t=   2.0s  decay=1.44x/100it  ETA=1310it (4s)  ps_avg=90.7/=
+[   700] |duv|=8.280e-02  |div|=4.240e-05  t=   2.3s  decay=1.46x/100it  ETA=1176it (4s)  ps_avg=90.0/=
+[   800] |duv|=5.491e-02  |div|=3.533e-05  t=   2.6s  decay=1.51x/100it  ETA=975it (3s) (down)  ps_avg=88.5/=
+[   900] |duv|=3.451e-02  |div|=2.591e-05  t=   2.8s  decay=1.59x/100it  ETA=763it (2s) (down)  ps_avg=86.0/dn
+[  1000] |duv|=2.041e-02  |div|=1.677e-05  t=   3.1s  decay=1.69x/100it  ETA=574it (2s) (down)  ps_avg=83.8/dn
+[  1100] |duv|=1.130e-02  |div|=1.478e-05  t=   3.4s  decay=1.81x/100it  ETA=410it (1s) (down)  ps_avg=82.0/dn
+[  1200] |duv|=5.864e-03  |div|=1.300e-05  t=   3.6s  decay=1.93x/100it  ETA=270it (1s) (down)  ps_avg=80.0/dn
+[  1300] |duv|=2.861e-03  |div|=1.100e-05  t=   3.9s  decay=2.05x/100it  ETA=146it (0s) (down)  ps_avg=77.7/dn
+[  1400] |duv|=1.289e-03  |div|=1.053e-05  t=   4.1s  decay=2.22x/100it  ETA=32it (0s) (down)  ps_avg=75.6/dn
+
+Converged at iter 1431, |duv_rel| = 9.931e-04
+----------------------------------------------------------------------
+Time: 4.16s
+Error U: L2=5.1723e-03  Linf=1.0875e-02
+Error V: L2=1.6291e-03  Linf=4.5614e-03
+Mass divergence: 1.0014e-05
+
+--- profiling (accumulated, s) ---
+  momentum    :     0.42
+  sor         :     2.83
+  correction  :     0.36
+  bcs         :     0.14
+  residual    :     0.27
+  copy_old    :     0.10
+  download    :     0.00
+  SOR syncs  : 6711
+
+-----------------------------------------------------
+
+  iterations: 1431
+        time: 4.1599e+00
+    err_u_l2: 5.1723e-03
+   err_u_inf: 1.0875e-02
+    err_v_l2: 1.6291e-03
+   err_v_inf: 4.5614e-03
+        mass: 1.0014e-05
+  ps_cap_hits: 0
+   converged: True
+
+# Finished: 2026-10-29T23:13:12.926820  (elapsed 4.2 s)

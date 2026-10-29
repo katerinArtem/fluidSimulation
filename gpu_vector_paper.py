@@ -21,7 +21,10 @@ import pyopencl as cl
 from paper_config import *                    # noqa: F401,F403
 from kovasznay import LAMBDA
 from run_logger import RunLogger
-
+REAL_NP   = np.float64 if USE_FP64 else np.float32
+UINT_NP   = np.uint64  if USE_FP64 else np.uint32
+REAL_SIZE = 8 if USE_FP64 else 4
+UINT_SIZE = 8 if USE_FP64 else 4
 
 # =============================================================================
 # Настройки производительности
