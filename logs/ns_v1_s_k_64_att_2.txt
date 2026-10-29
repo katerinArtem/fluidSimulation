@@ -1,0 +1,52 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_s_k_64_att_2.txt
+# Started: 2026-10-29T13:27:49.475640
+# version=v1 solver=s case=k NX=64 NY=64 attempt=2
+#--------------------------------------------------------------------
+SIMPLE scalar solver | NX=64 NY=64 | RE=40.0
+hx=0.02344 hy=0.01562 DT=1.953e-03 LAMBDA=-0.963741
+----------------------------------------------------------------------
+[   100] |duv|=9.315e-01  |div|=3.617e-04  t=  10.4s ps_avg=56.6
+[   200] |duv|=5.320e-01  |div|=1.087e-04  t=  18.5s ps_avg=49.4
+[   300] |duv|=3.641e-01  |div|=7.727e-05  t=  29.3s ps_avg=53.6
+[   400] |duv|=2.376e-01  |div|=2.385e-01  t=  35.5s ps_avg=48.6
+[   500] |duv|=1.591e-01  |div|=1.013e+00  t=  36.7s ps_avg=39.1
+[   600] |duv|=1.227e-01  |div|=1.987e+00  t=  38.0s ps_avg=32.8
+[   700] |duv|=1.015e-01  |div|=2.532e+00  t=  39.2s ps_avg=28.2
+[   800] |duv|=8.627e-02  |div|=2.608e+00  t=  40.5s ps_avg=24.8
+[   900] |duv|=7.510e-02  |div|=2.991e+00  t=  41.7s ps_avg=22.2
+[  1000] |duv|=6.887e-02  |div|=3.759e+00  t=  42.9s ps_avg=20.1
+[  1100] |duv|=6.119e-02  |div|=4.516e+00  t=  44.1s ps_avg=18.3
+[  1200] |duv|=5.067e-02  |div|=5.163e+00  t=  45.3s ps_avg=16.9
+[  1300] |duv|=4.010e-02  |div|=5.677e+00  t=  46.5s ps_avg=15.7
+[  1400] |duv|=3.083e-02  |div|=6.070e+00  t=  47.8s ps_avg=14.6
+[  1500] |duv|=2.322e-02  |div|=6.363e+00  t=  49.0s ps_avg=13.7
+[  1600] |duv|=1.721e-02  |div|=6.579e+00  t=  50.2s ps_avg=12.9
+[  1700] |duv|=1.260e-02  |div|=6.736e+00  t=  51.4s ps_avg=12.2
+[  1800] |duv|=9.129e-03  |div|=6.850e+00  t=  52.6s ps_avg=11.6
+[  1900] |duv|=6.560e-03  |div|=6.931e+00  t=  53.8s ps_avg=11.0
+[  2000] |duv|=4.682e-03  |div|=6.989e+00  t=  55.0s ps_avg=10.5
+[  2100] |duv|=3.325e-03  |div|=7.030e+00  t=  56.2s ps_avg=10.1
+[  2200] |duv|=2.352e-03  |div|=7.059e+00  t=  57.5s ps_avg=9.7
+[  2300] |duv|=1.660e-03  |div|=7.079e+00  t=  58.7s ps_avg=9.3
+[  2400] |duv|=1.169e-03  |div|=7.094e+00  t=  59.9s ps_avg=8.9
+
+Converged at iter 2445, |duv_rel| = 9.987e-04
+----------------------------------------------------------------------
+Time: 60.42s
+Error U: L2=9.1371e-02  Linf=2.2679e-01
+Error V: L2=2.7070e-02  Linf=1.2359e-01
+Mass divergence: 7.0987e+00
+
+-----------------------------------------------------
+
+  iterations: 2445
+        time: 6.0419e+01
+    err_u_l2: 9.1371e-02
+   err_u_inf: 2.2679e-01
+    err_v_l2: 2.7070e-02
+   err_v_inf: 1.2359e-01
+        mass: 7.0987e+00
+   converged: True
+     outcome: converged
+
+# Finished: 2026-10-29T13:28:49.900444  (elapsed 60.4 s)

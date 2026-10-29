@@ -191,8 +191,8 @@ def solve_pressure_correction(u_star, v_star, dt):
 
     p_prime = [[0.0] * NX for _ in range(NY)]
 
-
-    for _ in range(PS_MAX_ITER):
+    ps_iter_used = PS_MAX_ITER  # по умолчанию — упёрлись в cap
+    for k in range(PS_MAX_ITER):
         max_diff = 0.0
         for j in range(NY):
             pj = p_prime[j]
@@ -209,7 +209,9 @@ def solve_pressure_correction(u_star, v_star, dt):
                 if d > max_diff:
                     max_diff = d
                 pj[i] = p_new
-        if max_diff < ps_tol_abs:
+                
+        if max_diff < ps_tol_abs:      # проверка ТОЛЬКО после полного прохода
+            ps_iter_used = k + 1
             break
 
     # Remove arbitrary constant (pure-Neumann problem)
@@ -218,7 +220,7 @@ def solve_pressure_correction(u_star, v_star, dt):
         for i in range(NX):
             p_prime[j][i] -= p_ref
 
-    return p_prime
+    return p_prime, ps_iter_used
 
 # =============================================================================
 # Velocity correction
@@ -336,6 +338,7 @@ def solve():
     it = 0
     resid = float('inf')
 
+    ps_iters_accum = 0
     for it in range(1, MAX_ITER + 1):
         if MAX_WALL_TIME > 0 and (time.time() - t_start) > MAX_WALL_TIME:
             logger.log(f"\nWall-time limit reached at iter {it}")
@@ -350,7 +353,11 @@ def solve():
         momentum_predictor(DT, U, V, P, u_star, v_star)
 
         # 2. Pressure Poisson
-        p_prime = solve_pressure_correction(u_star, v_star, DT)
+        p_prime, ps_iter_used = solve_pressure_correction(u_star, v_star, DT)
+
+        ps_iters_accum += ps_iter_used
+        avg_ps = ps_iters_accum / it
+        
 
         # 3. Velocity correction
         correct_velocity(u_star, v_star, p_prime, DT, u_corr, v_corr)
@@ -375,7 +382,7 @@ def solve():
         if it % PRINT_EVERY == 0:
             mass = residual_mass(U, V)
             elapsed = time.time() - t_start
-            logger.log(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s")
+            logger.log(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s ps_avg={avg_ps:.1f}")
 
         if resid < STEADY_TOL_REL:
             logger.log(f"\nConverged at iter {it}, |duv_rel| = {resid:.3e}")
