@@ -1,0 +1,42 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_s_k_64_att_4.txt
+# Started: 2026-10-29T13:58:05.413500
+# version=v1 solver=s case=k NX=64 NY=64 attempt=4
+#--------------------------------------------------------------------
+SIMPLE scalar solver | NX=64 NY=64 | RE=40.0
+hx=0.02344 hy=0.01562 DT=1.953e-03 LAMBDA=-0.963741
+----------------------------------------------------------------------
+[   100] |duv|=9.313e-01  |div|=1.684e-04  t=  11.3s ps_avg=69.7
+[   200] |duv|=5.321e-01  |div|=4.809e-05  t=  19.2s ps_avg=57.2
+[   300] |duv|=3.641e-01  |div|=7.595e-05  t=  29.0s ps_avg=56.9
+[   400] |duv|=2.508e-01  |div|=6.651e-05  t=  41.4s ps_avg=61.6
+[   500] |duv|=1.737e-01  |div|=5.639e-05  t=  55.5s ps_avg=66.4
+[   600] |duv|=1.205e-01  |div|=4.809e-05  t=  69.9s ps_avg=70.1
+[   700] |duv|=8.278e-02  |div|=4.150e-05  t=  84.2s ps_avg=72.2
+[   800] |duv|=5.490e-02  |div|=3.298e-05  t=  96.8s ps_avg=72.5
+[   900] |duv|=3.451e-02  |div|=2.041e-05  t= 107.6s ps_avg=71.5
+[  1000] |duv|=2.040e-02  |div|=1.072e-05  t= 118.0s ps_avg=70.5
+[  1100] |duv|=1.130e-02  |div|=6.349e-06  t= 128.0s ps_avg=69.5
+[  1200] |duv|=5.864e-03  |div|=3.476e-06  t= 137.6s ps_avg=68.4
+[  1300] |duv|=2.858e-03  |div|=1.787e-06  t= 146.5s ps_avg=67.2
+[  1400] |duv|=1.289e-03  |div|=7.675e-07  t= 155.2s ps_avg=66.0
+
+Converged at iter 1431, |duv_rel| = 9.934e-04
+----------------------------------------------------------------------
+Time: 157.65s
+Error U: L2=5.1722e-03  Linf=1.0876e-02
+Error V: L2=1.6291e-03  Linf=4.5623e-03
+Mass divergence: 5.6786e-07
+
+-----------------------------------------------------
+
+  iterations: 1431
+        time: 1.5765e+02
+    err_u_l2: 5.1722e-03
+   err_u_inf: 1.0876e-02
+    err_v_l2: 1.6291e-03
+   err_v_inf: 4.5623e-03
+        mass: 5.6786e-07
+   converged: True
+     outcome: converged
+
+# Finished: 2026-10-29T14:00:43.070546  (elapsed 157.7 s)
