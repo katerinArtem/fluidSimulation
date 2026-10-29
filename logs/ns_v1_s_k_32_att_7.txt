@@ -1,0 +1,31 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_s_k_32_att_7.txt
+# Started: 2026-10-29T15:25:20.132607
+# version=v1 solver=s case=k NX=32 NY=32 attempt=7
+#--------------------------------------------------------------------
+SIMPLE scalar solver | NX=32 NY=32 | RE=40.0
+hx=0.04688 hy=0.03125 DT=7.812e-03 LAMBDA=-0.963741
+----------------------------------------------------------------------
+[   100] |duv|=2.358e-01  |div|=1.093e-04  t=   0.6s ps_avg=57.6
+[   200] |duv|=4.978e-02  |div|=5.570e-05  t=   1.4s ps_avg=67.4
+[   300] |duv|=5.891e-03  |div|=8.572e-06  t=   2.2s ps_avg=68.4
+
+Converged at iter 365, |duv_rel| = 9.915e-04
+----------------------------------------------------------------------
+Time: 2.58s
+Error U: L2=9.8619e-03  Linf=2.1357e-02
+Error V: L2=3.0932e-03  Linf=8.7455e-03
+Mass divergence: 1.6219e-06
+
+-----------------------------------------------------
+
+  iterations: 365
+        time: 2.5848e+00
+    err_u_l2: 9.8619e-03
+   err_u_inf: 2.1357e-02
+    err_v_l2: 3.0932e-03
+   err_v_inf: 8.7455e-03
+        mass: 1.6219e-06
+   converged: True
+     outcome: converged
+
+# Finished: 2026-10-29T15:25:22.719057  (elapsed 2.6 s)

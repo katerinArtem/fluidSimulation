@@ -607,4 +607,26 @@ def solve():
     return summary
 
 if __name__ == "__main__":
+    import sys
+    # ---- JIT guard ----
+    jit = getattr(sys, "_jit", None)
+
+    if jit is None:
+        print("ERROR: this Python build exposes no JIT API (sys._jit missing).")
+        print(f"       Python {sys.version.split()[0]} does not support JIT.")
+        print("       Use Python 3.13+ with JIT support (recommended: 3.15).")
+        sys.exit(1)
+
+    if not jit.is_available():
+        print("ERROR: JIT is not available in this Python build.")
+        print("       Rebuild Python with JIT support")
+        print("       (Windows: PCbuild\\build.bat --experimental-jit).")
+        sys.exit(1)
+
+    if not jit.is_enabled():
+        print("ERROR: JIT is available but NOT enabled.")
+        print("       Set the PYTHON_JIT environment variable and rerun.")
+        print('       PowerShell:  $env:PYTHON_JIT = "1"')
+        print("       cmd.exe:     set PYTHON_JIT=1")
+        sys.exit(1)
     solve()
