@@ -2,12 +2,15 @@
 PyOpenCL-порт векторизованного NumPy-решателя SIMPLE (MAC, upwind) для
 верификационного течения Ковасная.
 
-Исправления производительности относительно первой версии:
-  * ядра кэшируются в __init__ (устраняет RepeatedKernelRetrieval);
-  * SOR_BATCH — проверка ||d||∞ раз в N итераций SOR (не каждую);
-  * subtract_const читает 4 байта вместо 65 КБ;
-  * RunLogger — тот же, что в векторной версии;
-  * опциональный профайлер по компонентам.
+Поддерживает float32 и float64 через флаг USE_FP64 (в paper_config.py).
+
+Особенности реализации:
+  * все поля, rhs, p_prime, d_scratch — тип `real` (= double или float);
+  * атомарные редукции (max|div|, max|d|, max|duv|) — ВСЕГДА через
+    uint32-atomic: на AMD gfx1010 есть cl_khr_int64_base_atomics, но нет
+    cl_khr_int64_extended_atomics, поэтому atomic_max(ulong*) недоступен.
+    Точность редукции float32 достаточна для порогов
+    (STEADY_TOL_REL=1e-3, PS_TOL_REL=1e-6), а поля остаются `real`.
 
 Математика и алгоритм SIMPLE/red-black SOR/коррекции не менялись.
 """
@@ -21,20 +24,23 @@ import pyopencl as cl
 from paper_config import *                    # noqa: F401,F403
 from kovasznay import LAMBDA
 from run_logger import RunLogger
+
+# ==== Типы и размеры ====
 REAL_NP   = np.float64 if USE_FP64 else np.float32
-UINT_NP   = np.uint64  if USE_FP64 else np.uint32
 REAL_SIZE = 8 if USE_FP64 else 4
-UINT_SIZE = 8 if USE_FP64 else 4
+UINT_NP   = np.uint32     # атомики всегда 32-бит (портируемость)
+UINT_SIZE = 4
+PREC_NAME = "float64" if USE_FP64 else "float32"
 
 # =============================================================================
 # Настройки производительности
 # =============================================================================
-SOR_BATCH = 16       # сколько SOR-итераций между проверками ||d||∞
-PROFILE   = True    # печатать разбивку времени по компонентам в конце
+SOR_BATCH = 16
+PROFILE   = True
 
 
 # =============================================================================
-# Эталон и предвычисленные ГУ (float32)
+# Эталон и предвычисленные ГУ
 # =============================================================================
 
 def u_exact_vec(X, Y):
@@ -43,153 +49,167 @@ def u_exact_vec(X, Y):
 def v_exact_vec(X, Y):
     return (LAMBDA / (2.0 * np.pi)) * np.exp(LAMBDA * X) * np.sin(2.0 * np.pi * Y)
 
-x_u_arr = (X_MIN + np.arange(NX + 1) * HX).astype(np.float32)
-y_u_arr = (Y_MIN + (np.arange(NY) + 0.5) * HY).astype(np.float32)
-x_v_arr = (X_MIN + (np.arange(NX) + 0.5) * HX).astype(np.float32)
-y_v_arr = (Y_MIN + np.arange(NY + 1) * HY).astype(np.float32)
 
-_U_SOUTH = u_exact_vec(x_u_arr, np.full(NX + 1, Y_MIN)).astype(np.float32)
-_U_NORTH = u_exact_vec(x_u_arr, np.full(NX + 1, Y_MAX)).astype(np.float32)
-_U_WEST_BC = u_exact_vec(np.full(NY, X_MIN), y_u_arr).astype(np.float32)
-_U_EAST_BC = u_exact_vec(np.full(NY, X_MAX), y_u_arr).astype(np.float32)
+# Координаты для BC и постобработки — всегда float64
+x_u_arr = X_MIN + np.arange(NX + 1) * HX
+y_u_arr = Y_MIN + (np.arange(NY) + 0.5) * HY
+x_v_arr = X_MIN + (np.arange(NX) + 0.5) * HX
+y_v_arr = Y_MIN + np.arange(NY + 1) * HY
 
-_V_WEST_MOM = v_exact_vec(np.full(NY + 1, X_MIN), y_v_arr).astype(np.float32)
-_V_EAST_MOM = v_exact_vec(np.full(NY + 1, X_MAX), y_v_arr).astype(np.float32)
-_V_SOUTH_BC = v_exact_vec(x_v_arr, np.full(NX, Y_MIN)).astype(np.float32)
-_V_NORTH_BC = v_exact_vec(x_v_arr, np.full(NX, Y_MAX)).astype(np.float32)
+# BC-массивы — кастим в REAL_NP (уходят в GPU как `real*`)
+_U_SOUTH = u_exact_vec(x_u_arr, np.full(NX + 1, Y_MIN)).astype(REAL_NP)
+_U_NORTH = u_exact_vec(x_u_arr, np.full(NX + 1, Y_MAX)).astype(REAL_NP)
+_U_WEST_BC = u_exact_vec(np.full(NY, X_MIN), y_u_arr).astype(REAL_NP)
+_U_EAST_BC = u_exact_vec(np.full(NY, X_MAX), y_u_arr).astype(REAL_NP)
+
+_V_WEST_MOM = v_exact_vec(np.full(NY + 1, X_MIN), y_v_arr).astype(REAL_NP)
+_V_EAST_MOM = v_exact_vec(np.full(NY + 1, X_MAX), y_v_arr).astype(REAL_NP)
+_V_SOUTH_BC = v_exact_vec(x_v_arr, np.full(NX, Y_MIN)).astype(REAL_NP)
+_V_NORTH_BC = v_exact_vec(x_v_arr, np.full(NX, Y_MAX)).astype(REAL_NP)
 
 
 # =============================================================================
-# OpenCL kernels (без изменений относительно рабочей версии)
+# OpenCL kernels
 # =============================================================================
 
 KERNEL_SRC = r"""
+#ifdef USE_FP64
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
+typedef double real;
+#else
+typedef float real;
+#endif
+
+// Редукция всегда через uint32-atomic — работает на любом устройстве,
+// включая AMD gfx1010 без cl_khr_int64_extended_atomics.
+static inline uint real_to_u32(real x) { return as_uint((float)x); }
+
 __kernel void momentum_u(
-    __global const float* u, __global const float* v,
-    __global const float* p, __global float* u_star,
-    __global const float* U_SOUTH, __global const float* U_NORTH,
-    const float HX, const float HY, const float DT,
-    const float NU, const float RHO,
+    __global const real* u, __global const real* v,
+    __global const real* p, __global real* u_star,
+    __global const real* U_SOUTH, __global const real* U_NORTH,
+    const real HX, const real HY, const real DT,
+    const real NU, const real RHO,
     const int NX, const int NY)
 {
     int i = get_global_id(0) + 1;
     int j = get_global_id(1);
     if (i >= NX || j >= NY) return;
 
-    const float inv_hx  = 1.0f / HX;
-    const float inv_hy  = 1.0f / HY;
-    const float inv_hx2 = inv_hx * inv_hx;
-    const float inv_hy2 = inv_hy * inv_hy;
-    const float inv_rho = 1.0f / RHO;
-    const float WALL_COEF = 4.0f / 3.0f;
+    const real inv_hx  = 1.0 / HX;
+    const real inv_hy  = 1.0 / HY;
+    const real inv_hx2 = inv_hx * inv_hx;
+    const real inv_hy2 = inv_hy * inv_hy;
+    const real inv_rho = 1.0 / RHO;
+    const real WALL_COEF = 4.0 / 3.0;
 
-    float Uc = u[j*(NX+1) + i];
-    float Uw = u[j*(NX+1) + i-1];
-    float Ue = u[j*(NX+1) + i+1];
+    real Uc = u[j*(NX+1) + i];
+    real Uw = u[j*(NX+1) + i-1];
+    real Ue = u[j*(NX+1) + i+1];
 
-    float u_w = 0.5f * (Uw + Uc);
-    float u_e = 0.5f * (Uc + Ue);
+    real u_w = 0.5 * (Uw + Uc);
+    real u_e = 0.5 * (Uc + Ue);
 
-    float v_s = 0.5f * (v[j*NX + (i-1)]     + v[j*NX + i]);
-    float v_n = 0.5f * (v[(j+1)*NX + (i-1)] + v[(j+1)*NX + i]);
+    real v_s = 0.5 * (v[j*NX + (i-1)]     + v[j*NX + i]);
+    real v_n = 0.5 * (v[(j+1)*NX + (i-1)] + v[(j+1)*NX + i]);
 
-    float fw = u_w * (u_w > 0.0f ? Uw : Uc);
-    float fe = u_e * (u_e > 0.0f ? Uc : Ue);
+    real fw = u_w * (u_w > 0.0 ? Uw : Uc);
+    real fe = u_e * (u_e > 0.0 ? Uc : Ue);
 
-    float fs = 0.0f, fn = 0.0f;
+    real fs = 0.0, fn = 0.0;
     if (j > 0) {
-        float upw = (v_s > 0.0f) ? u[(j-1)*(NX+1) + i] : Uc;
+        real upw = (v_s > 0.0) ? u[(j-1)*(NX+1) + i] : Uc;
         fs = v_s * upw;
     }
     if (j < NY-1) {
-        float upw = (v_n > 0.0f) ? Uc : u[(j+1)*(NX+1) + i];
+        real upw = (v_n > 0.0) ? Uc : u[(j+1)*(NX+1) + i];
         fn = v_n * upw;
     }
 
-    float conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy);
-    float pres = -(p[j*NX + i] - p[j*NX + i-1]) * inv_rho * inv_hx;
-    float diff_x = (Uw - 2.0f*Uc + Ue) * inv_hx2;
+    real conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy);
+    real pres = -(p[j*NX + i] - p[j*NX + i-1]) * inv_rho * inv_hx;
+    real diff_x = (Uw - 2.0*Uc + Ue) * inv_hx2;
 
-    float diff_y;
+    real diff_y;
     if (j == 0) {
-        diff_y = WALL_COEF * (2.0f*U_SOUTH[i] - 3.0f*Uc + u[1*(NX+1)+i]) * inv_hy2;
+        diff_y = WALL_COEF * (2.0*U_SOUTH[i] - 3.0*Uc + u[1*(NX+1)+i]) * inv_hy2;
     } else if (j == NY-1) {
-        diff_y = WALL_COEF * (2.0f*U_NORTH[i] - 3.0f*Uc + u[(NY-2)*(NX+1)+i]) * inv_hy2;
+        diff_y = WALL_COEF * (2.0*U_NORTH[i] - 3.0*Uc + u[(NY-2)*(NX+1)+i]) * inv_hy2;
     } else {
-        diff_y = (u[(j-1)*(NX+1)+i] - 2.0f*Uc + u[(j+1)*(NX+1)+i]) * inv_hy2;
+        diff_y = (u[(j-1)*(NX+1)+i] - 2.0*Uc + u[(j+1)*(NX+1)+i]) * inv_hy2;
     }
 
     u_star[j*(NX+1) + i] = Uc + DT * (conv + pres + NU * (diff_x + diff_y));
 }
 
 __kernel void momentum_v(
-    __global const float* u, __global const float* v,
-    __global const float* p, __global float* v_star,
-    __global const float* V_WEST, __global const float* V_EAST,
-    const float HX, const float HY, const float DT,
-    const float NU, const float RHO,
+    __global const real* u, __global const real* v,
+    __global const real* p, __global real* v_star,
+    __global const real* V_WEST, __global const real* V_EAST,
+    const real HX, const real HY, const real DT,
+    const real NU, const real RHO,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
     int j = get_global_id(1) + 1;
     if (i >= NX || j >= NY) return;
 
-    const float inv_hx  = 1.0f / HX;
-    const float inv_hy  = 1.0f / HY;
-    const float inv_hx2 = inv_hx * inv_hx;
-    const float inv_hy2 = inv_hy * inv_hy;
-    const float inv_rho = 1.0f / RHO;
-    const float WALL_COEF = 4.0f / 3.0f;
+    const real inv_hx  = 1.0 / HX;
+    const real inv_hy  = 1.0 / HY;
+    const real inv_hx2 = inv_hx * inv_hx;
+    const real inv_hy2 = inv_hy * inv_hy;
+    const real inv_rho = 1.0 / RHO;
+    const real WALL_COEF = 4.0 / 3.0;
 
-    float Vc  = v[j*NX + i];
-    float Vjm = v[(j-1)*NX + i];
-    float Vjp = v[(j+1)*NX + i];
+    real Vc  = v[j*NX + i];
+    real Vjm = v[(j-1)*NX + i];
+    real Vjp = v[(j+1)*NX + i];
 
-    float Uj    = u[j*(NX+1) + i];
-    float Ujp1  = u[j*(NX+1) + i+1];
-    float Ujmm  = u[(j-1)*(NX+1) + i];
-    float Ujmp1 = u[(j-1)*(NX+1) + i+1];
+    real Uj    = u[j*(NX+1) + i];
+    real Ujp1  = u[j*(NX+1) + i+1];
+    real Ujmm  = u[(j-1)*(NX+1) + i];
+    real Ujmp1 = u[(j-1)*(NX+1) + i+1];
 
-    float u_w_v = 0.5f * (Ujmm + Uj);
-    float u_e_v = 0.5f * (Ujmp1 + Ujp1);
+    real u_w_v = 0.5 * (Ujmm + Uj);
+    real u_e_v = 0.5 * (Ujmp1 + Ujp1);
 
-    float v_s_v = 0.5f * (Vjm + Vc);
-    float v_n_v = 0.5f * (Vc + Vjp);
+    real v_s_v = 0.5 * (Vjm + Vc);
+    real v_n_v = 0.5 * (Vc + Vjp);
 
-    float fw_v, fe_v;
+    real fw_v, fe_v;
     if (i == 0) {
         fw_v = u_w_v * V_WEST[j];
     } else {
-        fw_v = u_w_v * (u_w_v > 0.0f ? v[j*NX + i-1] : Vc);
+        fw_v = u_w_v * (u_w_v > 0.0 ? v[j*NX + i-1] : Vc);
     }
     if (i == NX-1) {
         fe_v = u_e_v * V_EAST[j];
     } else {
-        fe_v = u_e_v * (u_e_v > 0.0f ? Vc : v[j*NX + i+1]);
+        fe_v = u_e_v * (u_e_v > 0.0 ? Vc : v[j*NX + i+1]);
     }
 
-    float fs_v = v_s_v * (v_s_v > 0.0f ? Vjm : Vc);
-    float fn_v = v_n_v * (v_n_v > 0.0f ? Vc : Vjp);
+    real fs_v = v_s_v * (v_s_v > 0.0 ? Vjm : Vc);
+    real fn_v = v_n_v * (v_n_v > 0.0 ? Vc : Vjp);
 
-    float conv_v = -((fe_v - fw_v) * inv_hx + (fn_v - fs_v) * inv_hy);
-    float pres_v = -(p[j*NX + i] - p[(j-1)*NX + i]) * inv_rho * inv_hy;
-    float diff_y_v = (Vjm - 2.0f*Vc + Vjp) * inv_hy2;
+    real conv_v = -((fe_v - fw_v) * inv_hx + (fn_v - fs_v) * inv_hy);
+    real pres_v = -(p[j*NX + i] - p[(j-1)*NX + i]) * inv_rho * inv_hy;
+    real diff_y_v = (Vjm - 2.0*Vc + Vjp) * inv_hy2;
 
-    float diff_x_v;
+    real diff_x_v;
     if (i == 0) {
-        diff_x_v = WALL_COEF * (2.0f*V_WEST[j] - 3.0f*Vc + v[j*NX + 1]) * inv_hx2;
+        diff_x_v = WALL_COEF * (2.0*V_WEST[j] - 3.0*Vc + v[j*NX + 1]) * inv_hx2;
     } else if (i == NX-1) {
-        diff_x_v = WALL_COEF * (2.0f*V_EAST[j] - 3.0f*Vc + v[j*NX + NX-2]) * inv_hx2;
+        diff_x_v = WALL_COEF * (2.0*V_EAST[j] - 3.0*Vc + v[j*NX + NX-2]) * inv_hx2;
     } else {
-        diff_x_v = (v[j*NX + i-1] - 2.0f*Vc + v[j*NX + i+1]) * inv_hx2;
+        diff_x_v = (v[j*NX + i-1] - 2.0*Vc + v[j*NX + i+1]) * inv_hx2;
     }
 
     v_star[j*NX + i] = Vc + DT * (conv_v + pres_v + NU * (diff_x_v + diff_y_v));
 }
 
 __kernel void copy_bcs_star(
-    __global const float* u, __global float* u_star,
-    __global const float* v, __global float* v_star,
+    __global const real* u, __global real* u_star,
+    __global const real* v, __global real* v_star,
     const int NX, const int NY)
 {
     int t = get_global_id(0);
@@ -204,10 +224,10 @@ __kernel void copy_bcs_star(
 }
 
 __kernel void sor_rb(
-    __global float* p,
-    __global const float* rhs,
-    __global float* d_scratch,
-    const float hx2d, const float hy2d, const float omega,
+    __global real* p,
+    __global const real* rhs,
+    __global real* d_scratch,
+    const real hx2d, const real hy2d, const real omega,
     const int NX, const int NY, const int color)
 {
     int i = get_global_id(0);
@@ -215,49 +235,48 @@ __kernel void sor_rb(
     if (i >= NX || j >= NY) return;
     if (((i + j) & 1) != color) return;
 
-    float pw = (i > 0)    ? p[j*NX + i-1]  : p[j*NX + 0];
-    float pe = (i < NX-1) ? p[j*NX + i+1]  : p[j*NX + NX-1];
-    float ps = (j > 0)    ? p[(j-1)*NX + i] : p[0*NX + i];
-    float pn = (j < NY-1) ? p[(j+1)*NX + i] : p[(NY-1)*NX + i];
+    real pw = (i > 0)    ? p[j*NX + i-1]  : p[j*NX + 0];
+    real pe = (i < NX-1) ? p[j*NX + i+1]  : p[j*NX + NX-1];
+    real ps = (j > 0)    ? p[(j-1)*NX + i] : p[0*NX + i];
+    real pn = (j < NY-1) ? p[(j+1)*NX + i] : p[(NY-1)*NX + i];
 
-    float p_gs = hx2d * (pw + pe) + hy2d * (ps + pn) - rhs[j*NX + i];
-    float d = omega * (p_gs - p[j*NX + i]);
+    real p_gs = hx2d * (pw + pe) + hy2d * (ps + pn) - rhs[j*NX + i];
+    real d = omega * (p_gs - p[j*NX + i]);
     p[j*NX + i] += d;
 
-    // race-free: d_scratch[j,i] пишется только этим work-item'ом
     d_scratch[j*NX + i] = fmax(d_scratch[j*NX + i], fabs(d));
 }
 
 __kernel void reduce_max(
-    __global const float* d_scratch,
+    __global const real* d_scratch,
     volatile __global uint* out,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
     int j = get_global_id(1);
     if (i >= NX || j >= NY) return;
-    atomic_max(out, as_uint(d_scratch[j*NX + i]));
+    atomic_max(out, real_to_u32(d_scratch[j*NX + i]));
 }
 
 __kernel void compute_div_rhs(
-    __global const float* u,
-    __global const float* v,
-    __global float* rhs,
+    __global const real* u,
+    __global const real* v,
+    __global real* rhs,
     volatile __global uint* max_div,
-    const float inv_hx, const float inv_hy, const float rhs_coef,
+    const real inv_hx, const real inv_hy, const real rhs_coef,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
     int j = get_global_id(1);
     if (i >= NX || j >= NY) return;
-    float div = (u[j*(NX+1) + i+1] - u[j*(NX+1) + i]) * inv_hx
-              + (v[(j+1)*NX + i]  - v[j*NX + i])      * inv_hy;
+    real div = (u[j*(NX+1) + i+1] - u[j*(NX+1) + i]) * inv_hx
+             + (v[(j+1)*NX + i]  - v[j*NX + i])      * inv_hy;
     rhs[j*NX + i] = div * rhs_coef;
-    atomic_max(max_div, as_uint(fabs(div)));
+    atomic_max(max_div, real_to_u32(fabs(div)));
 }
 
 __kernel void subtract_const(
-    __global float* p, const float c,
+    __global real* p, const real c,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
@@ -267,43 +286,43 @@ __kernel void subtract_const(
 }
 
 __kernel void update_u(
-    __global float* u,
-    __global const float* u_star,
-    __global const float* p_prime,
-    __global const float* u_old,
-    const float alpha_u, const float coeff, const float inv_hx,
+    __global real* u,
+    __global const real* u_star,
+    __global const real* p_prime,
+    __global const real* u_old,
+    const real alpha_u, const real coeff, const real inv_hx,
     const int NX, const int NY)
 {
     int i = get_global_id(0) + 1;
     int j = get_global_id(1);
     if (i >= NX || j >= NY) return;
-    float grad = (p_prime[j*NX + i] - p_prime[j*NX + i-1]) * inv_hx;
-    float uc = u_star[j*(NX+1) + i] - coeff * grad;
-    uc = alpha_u * uc + (1.0f - alpha_u) * u_old[j*(NX+1) + i];
+    real grad = (p_prime[j*NX + i] - p_prime[j*NX + i-1]) * inv_hx;
+    real uc = u_star[j*(NX+1) + i] - coeff * grad;
+    uc = alpha_u * uc + (1.0 - alpha_u) * u_old[j*(NX+1) + i];
     u[j*(NX+1) + i] = uc;
 }
 
 __kernel void update_v(
-    __global float* v,
-    __global const float* v_star,
-    __global const float* p_prime,
-    __global const float* v_old,
-    const float alpha_u, const float coeff, const float inv_hy,
+    __global real* v,
+    __global const real* v_star,
+    __global const real* p_prime,
+    __global const real* v_old,
+    const real alpha_u, const real coeff, const real inv_hy,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
     int j = get_global_id(1) + 1;
     if (i >= NX || j >= NY) return;
-    float grad = (p_prime[j*NX + i] - p_prime[(j-1)*NX + i]) * inv_hy;
-    float vc = v_star[j*NX + i] - coeff * grad;
-    vc = alpha_u * vc + (1.0f - alpha_u) * v_old[j*NX + i];
+    real grad = (p_prime[j*NX + i] - p_prime[(j-1)*NX + i]) * inv_hy;
+    real vc = v_star[j*NX + i] - coeff * grad;
+    vc = alpha_u * vc + (1.0 - alpha_u) * v_old[j*NX + i];
     v[j*NX + i] = vc;
 }
 
 __kernel void update_p(
-    __global float* p,
-    __global const float* p_prime,
-    const float alpha_p,
+    __global real* p,
+    __global const real* p_prime,
+    const real alpha_p,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
@@ -313,9 +332,9 @@ __kernel void update_p(
 }
 
 __kernel void apply_bcs(
-    __global float* u, __global float* v,
-    __global const float* U_WEST, __global const float* U_EAST,
-    __global const float* V_SOUTH, __global const float* V_NORTH,
+    __global real* u, __global real* v,
+    __global const real* U_WEST, __global const real* U_EAST,
+    __global const real* V_SOUTH, __global const real* V_NORTH,
     const int NX, const int NY)
 {
     int t = get_global_id(0);
@@ -330,8 +349,8 @@ __kernel void apply_bcs(
 }
 
 __kernel void residual_uv(
-    __global const float* u_new, __global const float* v_new,
-    __global const float* u_old, __global const float* v_old,
+    __global const real* u_new, __global const real* v_new,
+    __global const real* u_old, __global const real* v_old,
     volatile __global uint* scratch,
     const int NX, const int NY)
 {
@@ -340,31 +359,31 @@ __kernel void residual_uv(
     if (i >= NX || j >= NY) return;
 
     if (i < NX-1) {
-        float du = fabs(u_new[j*(NX+1) + i+1] - u_old[j*(NX+1) + i+1]);
-        float ua = fabs(u_new[j*(NX+1) + i+1]);
-        atomic_max(&scratch[0], as_uint(du));
-        atomic_max(&scratch[2], as_uint(ua));
+        real du = fabs(u_new[j*(NX+1) + i+1] - u_old[j*(NX+1) + i+1]);
+        real ua = fabs(u_new[j*(NX+1) + i+1]);
+        atomic_max(&scratch[0], real_to_u32(du));
+        atomic_max(&scratch[2], real_to_u32(ua));
     }
     if (j < NY-1) {
-        float dv = fabs(v_new[(j+1)*NX + i] - v_old[(j+1)*NX + i]);
-        float va = fabs(v_new[(j+1)*NX + i]);
-        atomic_max(&scratch[1], as_uint(dv));
-        atomic_max(&scratch[3], as_uint(va));
+        real dv = fabs(v_new[(j+1)*NX + i] - v_old[(j+1)*NX + i]);
+        real va = fabs(v_new[(j+1)*NX + i]);
+        atomic_max(&scratch[1], real_to_u32(dv));
+        atomic_max(&scratch[3], real_to_u32(va));
     }
 }
 
 __kernel void residual_mass(
-    __global const float* u, __global const float* v,
+    __global const real* u, __global const real* v,
     volatile __global uint* max_div,
-    const float inv_hx, const float inv_hy,
+    const real inv_hx, const real inv_hy,
     const int NX, const int NY)
 {
     int i = get_global_id(0);
     int j = get_global_id(1);
     if (i >= NX || j >= NY) return;
-    float div = (u[j*(NX+1) + i+1] - u[j*(NX+1) + i]) * inv_hx
-              + (v[(j+1)*NX + i]  - v[j*NX + i])      * inv_hy;
-    atomic_max(max_div, as_uint(fabs(div)));
+    real div = (u[j*(NX+1) + i+1] - u[j*(NX+1) + i]) * inv_hx
+             + (v[(j+1)*NX + i]  - v[j*NX + i])      * inv_hy;
+    atomic_max(max_div, real_to_u32(fabs(div)));
 }
 """
 
@@ -390,19 +409,27 @@ class GPUSolver:
             raise RuntimeError("Не найдено OpenCL GPU. Проверьте драйвер AMD.")
 
         if verbose:
+            exts = self.dev.extensions.split()
+            has_fp64 = "cl_khr_fp64" in exts
             print(f"OpenCL device: {self.dev.name}")
             print(f"  platform     : {self.dev.platform.name}")
             print(f"  compute units: {self.dev.max_compute_units}")
+            print(f"  precision    : {PREC_NAME}")
+            print(f"  cl_khr_fp64  : {has_fp64}")
+            if USE_FP64 and not has_fp64:
+                raise RuntimeError(
+                    "USE_FP64=True, но cl_khr_fp64 не поддерживается на этом устройстве."
+                )
 
         self.queue = cl.CommandQueue(self.ctx)
-        self.prog = cl.Program(self.ctx, KERNEL_SRC).build()
+        build_opts = ['-DUSE_FP64=1'] if USE_FP64 else []
+        self.prog = cl.Program(self.ctx, KERNEL_SRC).build(options=build_opts)
 
-        # =============== КЭШ ЯДЕР (главный фикс производительности) =======
+        # =============== КЭШ ЯДЕР =======
         self.k_momentum_u   = cl.Kernel(self.prog, 'momentum_u')
         self.k_momentum_v   = cl.Kernel(self.prog, 'momentum_v')
         self.k_copy_bcs_star= cl.Kernel(self.prog, 'copy_bcs_star')
         self.k_compute_div  = cl.Kernel(self.prog, 'compute_div_rhs')
-        self.k_sub_const    = cl.Kernel(self.prog, 'subtract_const')
         self.k_update_u     = cl.Kernel(self.prog, 'update_u')
         self.k_update_v     = cl.Kernel(self.prog, 'update_v')
         self.k_update_p     = cl.Kernel(self.prog, 'update_p')
@@ -411,9 +438,9 @@ class GPUSolver:
         self.k_res_mass     = cl.Kernel(self.prog, 'residual_mass')
 
         mf = cl.mem_flags
-        size_u = 4 * NY * (NX + 1)
-        size_v = 4 * (NY + 1) * NX
-        size_p = 4 * NY * NX
+        size_u = REAL_SIZE * NY * (NX + 1)
+        size_v = REAL_SIZE * (NY + 1) * NX
+        size_p = REAL_SIZE * NY * NX
 
         self.u       = cl.Buffer(self.ctx, mf.READ_WRITE, size_u)
         self.v       = cl.Buffer(self.ctx, mf.READ_WRITE, size_v)
@@ -434,35 +461,35 @@ class GPUSolver:
         self.V_SOUTH = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=_V_SOUTH_BC)
         self.V_NORTH = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=_V_NORTH_BC)
 
-        self.batch_max_d_buf = cl.Buffer(self.ctx, mf.READ_WRITE, 4)
-        self.d_scratch      = cl.Buffer(self.ctx, mf.READ_WRITE, size_p)
+        # атомики — всегда uint32, поля d_scratch — real
+        self.batch_max_d_buf = cl.Buffer(self.ctx, mf.READ_WRITE, UINT_SIZE)
+        self.d_scratch       = cl.Buffer(self.ctx, mf.READ_WRITE, size_p)
+        self.max_div_buf     = cl.Buffer(self.ctx, mf.READ_WRITE, UINT_SIZE)
+        self.res_scratch     = cl.Buffer(self.ctx, mf.READ_WRITE, 4 * UINT_SIZE)
 
-        self.max_div_buf = cl.Buffer(self.ctx, mf.READ_WRITE, 4)
-        self.res_scratch = cl.Buffer(self.ctx, mf.READ_WRITE, 16)
+        self.NXi  = np.int32(NX)
+        self.NYi  = np.int32(NY)
+        self.HXf  = REAL_NP(HX)
+        self.HYf  = REAL_NP(HY)
+        self.DTf  = REAL_NP(DT)
+        self.NUf  = REAL_NP(NU)
+        self.RHOf = REAL_NP(RHO)
 
-        self.NXi = np.int32(NX)
-        self.NYi = np.int32(NY)
-        self.HXf = np.float32(HX)
-        self.HYf = np.float32(HY)
-        self.DTf = np.float32(DT)
-        self.NUf = np.float32(NU)
-        self.RHOf = np.float32(RHO)
+        self._zeros_p = np.zeros((NY, NX), dtype=REAL_NP)
+        self._zeros_1 = np.zeros(1, dtype=UINT_NP)
+        self._zeros_4 = np.zeros(4, dtype=UINT_NP)
 
-        self._zeros_p = np.zeros((NY, NX), dtype=np.float32)
-        self._zeros_1 = np.zeros(1, dtype=np.uint32)
-        self._zeros_4 = np.zeros(4, dtype=np.uint32)
-
-        # ============ предварительно настроенный subtract_const ============
+        # ============ preset: subtract_const ============
         self.k_sub_const = cl.Kernel(self.prog, 'subtract_const')
         self.k_sub_const.set_arg(0, self.p_prime)
         # arg 1 (c) — обновляется в solve_pressure
         self.k_sub_const.set_arg(2, np.int32(NX))
         self.k_sub_const.set_arg(3, np.int32(NY))
 
-        # ============ предварительно настроенные SOR-ядра ============
-        hx2d = np.float32((1.0/(HX*HX)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
-        hy2d = np.float32((1.0/(HY*HY)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
-        omega = np.float32(PS_OMEGA)
+        # ============ preset: SOR ============
+        hx2d  = REAL_NP((1.0/(HX*HX)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
+        hy2d  = REAL_NP((1.0/(HY*HY)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
+        omega = REAL_NP(PS_OMEGA)
 
         def _mk_sor(color):
             k = cl.Kernel(self.prog, 'sor_rb')
@@ -476,7 +503,7 @@ class GPUSolver:
             k.set_arg(7, np.int32(NY))
             k.set_arg(8, np.int32(color))
             return k
-        
+
         self.k_sor_red   = _mk_sor(0)
         self.k_sor_black = _mk_sor(1)
 
@@ -486,21 +513,21 @@ class GPUSolver:
         self.k_reduce_max.set_arg(2, np.int32(NX))
         self.k_reduce_max.set_arg(3, np.int32(NY))
 
-        # предвычисленные константы
-        self._inv_hx  = np.float32(1.0 / HX)
-        self._inv_hy  = np.float32(1.0 / HY)
+        # константы
+        self._inv_hx  = REAL_NP(1.0 / HX)
+        self._inv_hy  = REAL_NP(1.0 / HY)
         denom = 2.0 * (1.0/(HX*HX) + 1.0/(HY*HY))
         inv_den = 1.0 / denom
-        self._rhs_scale = np.float32(RHO / DT)
-        self._rhs_coef  = np.float32(self._rhs_scale * inv_den)
-        self._alpha_u   = np.float32(ALPHA_U)
-        self._alpha_p   = np.float32(ALPHA_P)
-        self._coeff     = np.float32(DT / RHO)
+        self._rhs_scale = REAL_NP(RHO / DT)
+        self._rhs_coef  = REAL_NP(self._rhs_scale * inv_den)
+        self._alpha_u   = REAL_NP(ALPHA_U)
+        self._alpha_p   = REAL_NP(ALPHA_P)
+        self._coeff     = REAL_NP(DT / RHO)
 
         # профайлинг
         self.t = {'momentum':0.0, 'sor':0.0, 'correction':0.0,
                   'bcs':0.0, 'residual':0.0, 'copy_old':0.0, 'download':0.0}
-        self.n_sor_syncs = 0
+        self.n_sor_syncs   = 0
         self.n_ps_cap_hits = 0
 
     # -------- helpers для atomic-буферов --------
@@ -508,22 +535,22 @@ class GPUSolver:
         cl.enqueue_copy(self.queue, buf, self._zeros_1)
 
     def _read1_as_float(self, buf):
-        raw = np.zeros(1, dtype=np.uint32)
-        cl.enqueue_copy(self.queue, raw, buf)     # blocking by default
+        raw = np.zeros(1, dtype=UINT_NP)
+        cl.enqueue_copy(self.queue, raw, buf)
         return float(raw.view(np.float32)[0])
 
     def _reset4(self, buf):
         cl.enqueue_copy(self.queue, buf, self._zeros_4)
 
     def _read4_as_float(self, buf):
-        raw = np.zeros(4, dtype=np.uint32)
+        raw = np.zeros(4, dtype=UINT_NP)
         cl.enqueue_copy(self.queue, raw, buf)
         return raw.view(np.float32)
 
     # -------- основные операции --------
     def set_initial(self):
-        zeros_u = np.zeros((NY, NX + 1), dtype=np.float32)
-        zeros_v = np.zeros((NY + 1, NX), dtype=np.float32)
+        zeros_u = np.zeros((NY, NX + 1), dtype=REAL_NP)
+        zeros_v = np.zeros((NY + 1, NX), dtype=REAL_NP)
         cl.enqueue_copy(self.queue, self.u, zeros_u)
         cl.enqueue_copy(self.queue, self.v, zeros_v)
         cl.enqueue_copy(self.queue, self.p, self._zeros_p)
@@ -564,7 +591,6 @@ class GPUSolver:
         )
 
     def solve_pressure(self):
-        # div и rhs + норма rhs
         self._reset1(self.max_div_buf)
         self.k_compute_div(
             self.queue, (NX, NY), None,
@@ -584,20 +610,16 @@ class GPUSolver:
         gsize = (NX, NY)
 
         for k0 in range(0, PS_MAX_ITER, SOR_BATCH):
-            # сброс d_scratch и batch_max_d
             cl.enqueue_copy(self.queue, self.d_scratch, self._zeros_p)
             cl.enqueue_copy(self.queue, self.batch_max_d_buf, self._zeros_1)
 
-            # SOR_BATCH итераций red-black — БЕЗ marshal аргументов
             for _ in range(SOR_BATCH):
                 cl.enqueue_nd_range_kernel(self.queue, self.k_sor_red,   gsize, None)
                 cl.enqueue_nd_range_kernel(self.queue, self.k_sor_black, gsize, None)
 
-            # одна редукция на батч
             cl.enqueue_nd_range_kernel(self.queue, self.k_reduce_max, gsize, None)
 
-            # ждём результат (блокирующее чтение 4 байт)
-            raw = np.zeros(1, dtype=np.uint32)
+            raw = np.zeros(1, dtype=UINT_NP)
             cl.enqueue_copy(self.queue, raw, self.batch_max_d_buf)
             max_diff = float(raw.view(np.float32)[0])
             self.n_sor_syncs += 1
@@ -606,10 +628,10 @@ class GPUSolver:
                 ps_iter_used = k0 + SOR_BATCH
                 break
 
-        # subtract p00 — читаем 4 байта, обновляем 1 arg, один enqueue
-        p00_raw = np.zeros(1, dtype=np.float32)
+        # subtract p00 — читаем sizeof(real) байт из p_prime
+        p00_raw = np.zeros(1, dtype=REAL_NP)
         cl.enqueue_copy(self.queue, p00_raw, self.p_prime, src_offset=0)
-        self.k_sub_const.set_arg(1, np.float32(p00_raw[0]))
+        self.k_sub_const.set_arg(1, REAL_NP(p00_raw[0]))
         cl.enqueue_nd_range_kernel(self.queue, self.k_sub_const, gsize, None)
         return ps_iter_used
 
@@ -657,9 +679,9 @@ class GPUSolver:
         return self._read1_as_float(self.max_div_buf)
 
     def download(self):
-        u_np = np.empty((NY, NX + 1), dtype=np.float32)
-        v_np = np.empty((NY + 1, NX), dtype=np.float32)
-        p_np = np.empty((NY, NX), dtype=np.float32)
+        u_np = np.empty((NY, NX + 1), dtype=REAL_NP)
+        v_np = np.empty((NY + 1, NX), dtype=REAL_NP)
+        p_np = np.empty((NY, NX), dtype=REAL_NP)
         cl.enqueue_copy(self.queue, u_np, self.u)
         cl.enqueue_copy(self.queue, v_np, self.v)
         cl.enqueue_copy(self.queue, p_np, self.p)
@@ -667,7 +689,7 @@ class GPUSolver:
 
 
 # =============================================================================
-# Основной цикл (с логированием как в векторной версии)
+# Основной цикл
 # =============================================================================
 
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -677,13 +699,14 @@ def solve():
     gpu.set_initial()
 
     logger = RunLogger(
-        base_dir=BASE, version="v1", solver="g",
+        base_dir=BASE, version="v1", solver="g64",
         case="k", nx=NX, ny=NY,
     )
 
-    logger.log(f"SIMPLE GPU (PyOpenCL) solver | NX={NX} NY={NY} | RE={RE}")
+    logger.log(f"SIMPLE GPU (PyOpenCL, {PREC_NAME}) solver | NX={NX} NY={NY} | RE={RE}")
     logger.log(f"hx={HX:.5f} hy={HY:.5f} DT={DT:.3e} LAMBDA={LAMBDA:.6f}")
-    logger.log(f"pressure: red-black SOR, PS_OMEGA={PS_OMEGA:.5f}, batch={SOR_BATCH}")
+    logger.log(f"pressure: red-black SOR, PS_OMEGA={PS_OMEGA:.5f}, "
+               f"batch={SOR_BATCH}, PS_TOL_REL={PS_TOL_REL:.1e}")
     logger.log("-" * 70)
     logger.log("cols: |duv| resid  |div| mass-div  ps_avg(SOR iters)  "
                "decay=xN per 100it  ETA = local extrap")
@@ -726,8 +749,16 @@ def solve():
         resid = gpu.residual_uv()
         if PROFILE: gpu.t['residual'] += time.perf_counter()-t0
 
+        if not math.isfinite(resid):
+            logger.log(f"\nDIVERGED at iter {it}: |duv|={resid}")
+            break
+
         if it % PRINT_EVERY == 0:
             mass = gpu.residual_mass()
+            if not math.isfinite(mass):
+                logger.log(f"\nDIVERGED at iter {it} (mass)")
+                break
+
             elapsed = time.time() - t_start
             ms_per_it = 1000.0 * elapsed / it
 
@@ -787,22 +818,22 @@ def solve():
 
     u_np, v_np, p_np = gpu.download()
 
+    # Ошибки считаем в float64 (эталон тоже float64) — для честного сравнения
     X_u = x_u_arr[None, :]; Y_u = y_u_arr[:, None]
-    Ue = (1.0 - np.exp(LAMBDA*X_u) * np.cos(2.0*np.pi*Y_u)).astype(np.float32)
-    err_u = u_np - Ue
+    Ue = 1.0 - np.exp(LAMBDA*X_u) * np.cos(2.0*np.pi*Y_u)
+    err_u = u_np.astype(np.float64) - Ue
     err_u_l2  = float(np.sqrt(np.mean(err_u*err_u)))
     err_u_inf = float(np.abs(err_u).max())
 
     X_v = x_v_arr[None, :]; Y_v = y_v_arr[:, None]
-    Ve = ((LAMBDA/(2.0*np.pi)) *
-          np.exp(LAMBDA*X_v) * np.sin(2.0*np.pi*Y_v)).astype(np.float32)
-    err_v = v_np - Ve
+    Ve = (LAMBDA/(2.0*np.pi)) * np.exp(LAMBDA*X_v) * np.sin(2.0*np.pi*Y_v)
+    err_v = v_np.astype(np.float64) - Ve
     err_v_l2  = float(np.sqrt(np.mean(err_v*err_v)))
     err_v_inf = float(np.abs(err_v).max())
 
     mass = float(np.abs(
-        (u_np[:, 1:NX+1] - u_np[:, 0:NX]) / HX
-        + (v_np[1:NY+1, :] - v_np[0:NY, :]) / HY
+        (u_np[:, 1:NX+1].astype(np.float64) - u_np[:, 0:NX].astype(np.float64)) / HX
+        + (v_np[1:NY+1, :].astype(np.float64) - v_np[0:NY, :].astype(np.float64)) / HY
     ).max())
 
     logger.log("-" * 70)

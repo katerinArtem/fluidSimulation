@@ -40,6 +40,7 @@ RE_GRID = re.compile(
     r"DT=(?P<dt>[-\d.eE+]+)\s+LAMBDA=(?P<lam>[-\d.eE+]+)"
 )
 RE_PSOMEGA = re.compile(r"PS_OMEGA=(?P<omega>[-\d.eE+]+)")
+RE_PS_TOL = re.compile(r"PS_TOL_REL=(?P<tol>[-\d.eE+]+)")
 RE_BATCH   = re.compile(r"\bbatch=(?P<batch>\d+)")
 
 # строка истории: [  100] |duv|=.. |div|=.. t=..s ps_avg=.. [decay=.. ETA=..]
@@ -48,8 +49,8 @@ RE_ITER = re.compile(
     r"\|duv\|=(?P<duv>\S+)\s+"
     r"\|div\|=(?P<div>\S+)"
     r"(?:\s+t=\s*(?P<t>[\d.]+)s)?"
-    r"(?:\s+ps_avg=(?P<ps>[\d.]+))?"
 )
+RE_PS_AVG = re.compile(r"ps_avg=(?P<ps>[\d.]+)")
 RE_DECAY = re.compile(r"decay=(?P<decay>[\d.]+)x/100it")
 RE_ETA   = re.compile(r"ETA=(?P<eta>\d+)it")
 
@@ -119,6 +120,7 @@ def parse_log(path: Path):
         "prof_momentum": None, "prof_sor": None, "prof_correction": None,
         "prof_bcs": None, "prof_residual": None, "prof_copy_old": None,
         "prof_download": None,
+        "ps_tol_rel": None,
         "n_history": 0,
     }
     history = []
@@ -159,13 +161,14 @@ def parse_log(path: Path):
         if m:
             dm = RE_DECAY.search(line)
             em = RE_ETA.search(line)
+            psm = RE_PS_AVG.search(line)
             history.append({
                 "run_id": path.stem,
                 "iter": int(m.group("it")),
                 "duv": _to_float(m.group("duv")),
                 "div": _to_float(m.group("div")),
                 "t": _to_float(m.group("t")),
-                "ps_avg": _to_float(m.group("ps")),
+                "ps_avg":  _to_float(psm.group("ps")) if psm else None,
                 "decay": _to_float(dm.group("decay")) if dm else None,
                 "eta_it": int(em.group("eta")) if em else None,
             })
@@ -185,6 +188,10 @@ def parse_log(path: Path):
             m = RE_PSOMEGA.search(line)
             if m:
                 meta["ps_omega"] = _to_float(m.group("omega"))
+        if meta["ps_tol_rel"] is None:                    # <-- NEW
+            m = RE_PS_TOL.search(line)
+            if m:
+                meta["ps_tol_rel"] = _to_float(m.group("tol"))
         if meta["batch"] is None:
             m = RE_BATCH.search(line)
             if m:
@@ -257,6 +264,8 @@ def parse_log(path: Path):
                 meta[key] = _to_float(val)
             continue
 
+    if meta["outcome"] is None and meta["converged"] is not None:
+        meta["outcome"] = "converged" if meta["converged"] else "failed"
     if meta["time"] is None:
         meta["time"] = meta["time_header"]
     meta["n_history"] = len(history)
@@ -312,9 +321,19 @@ def speedup_table(runs: pd.DataFrame) -> pd.DataFrame:
 # Графики
 # ---------------------------------------------------------------------------
 
-SOLVER_LABEL = {"s": "scalar (CPU)", "v": "vectorized (NumPy)", "g": "GPU (OpenCL)"}
-SOLVER_COLOR = {"s": "#1f77b4", "v": "#ff7f0e", "g": "#2ca02c"}
-_SOLVER_PREF = ["s", "v", "g"]
+SOLVER_LABEL = {
+    "s":   "scalar (CPU)",
+    "v":   "vectorized (NumPy)",
+    "g":   "GPU (OpenCL, f32)",
+    "g64": "GPU (OpenCL, f64)",
+}
+SOLVER_COLOR = {
+    "s":   "#1f77b4",
+    "v":   "#ff7f0e",
+    "g":   "#2ca02c",
+    "g64": "#9467bd",   # фиолетовый, чтобы отличать от g
+}
+_SOLVER_PREF = ["s", "v", "g", "g64"]
 
 
 def _order_solvers(solvers):

@@ -1,0 +1,44 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_g64_k_32_att_1.txt
+# Started: 2026-10-29T23:39:36.792898
+# version=v1 solver=g64 case=k NX=32 NY=32 attempt=1
+#--------------------------------------------------------------------
+SIMPLE GPU (PyOpenCL, float64) solver | NX=32 NY=32 | RE=40.0
+hx=0.04688 hy=0.03125 DT=7.812e-03 LAMBDA=-0.963741
+pressure: red-black SOR, PS_OMEGA=1.82147, batch=16, PS_TOL_REL=1.0e-05
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters)  decay=xN per 100it  ETA = local extrap
+----------------------------------------------------------------------
+[   100] |duv|=2.358e-01  |div|=7.902e-05  t=   0.4s  ps_avg=97.4
+[   200] |duv|=4.978e-02  |div|=2.900e-05  t=   0.8s  decay=4.74x/100it  ETA=251it (1s)  ps_avg=97.0/=
+[   300] |duv|=5.893e-03  |div|=5.988e-06  t=   1.1s  decay=8.45x/100it  ETA=83it (0s) (down)  ps_avg=91.5/dn
+
+Converged at iter 365, |duv_rel| = 9.921e-04
+----------------------------------------------------------------------
+Time: 1.27s
+Error U: L2=9.8619e-03  Linf=2.1357e-02
+Error V: L2=3.0932e-03  Linf=8.7449e-03
+Mass divergence: 9.8748e-07
+
+--- profiling (accumulated, s) ---
+  momentum    :     0.11
+  sor         :     0.91
+  correction  :     0.10
+  bcs         :     0.04
+  residual    :     0.08
+  copy_old    :     0.03
+  download    :     0.00
+  SOR syncs  : 1983
+
+-----------------------------------------------------
+
+  iterations: 365
+        time: 1.2728e+00
+    err_u_l2: 9.8619e-03
+   err_u_inf: 2.1357e-02
+    err_v_l2: 3.0932e-03
+   err_v_inf: 8.7449e-03
+        mass: 9.8748e-07
+  ps_cap_hits: 0
+   converged: True
+
+# Finished: 2026-10-29T23:39:38.067799  (elapsed 1.3 s)

@@ -1,0 +1,87 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_g64_k_256_att_1.txt
+# Started: 2026-10-29T23:41:01.454402
+# version=v1 solver=g64 case=k NX=256 NY=256 attempt=1
+#--------------------------------------------------------------------
+SIMPLE GPU (PyOpenCL, float64) solver | NX=256 NY=256 | RE=40.0
+hx=0.00586 hy=0.00391 DT=1.221e-04 LAMBDA=-0.963741
+pressure: red-black SOR, PS_OMEGA=1.97575, batch=16, PS_TOL_REL=1.0e-05
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters)  decay=xN per 100it  ETA = local extrap
+----------------------------------------------------------------------
+[   500] |duv|=3.195e+00  |div|=4.505e-04  t=   1.5s  ps_avg=44.4
+[  1000] |duv|=1.564e+00  |div|=1.069e-04  t=   3.3s  decay=1.15x/100it  ETA=5146it (17s)  ps_avg=51.6/up
+[  1500] |duv|=1.030e+00  |div|=7.036e-05  t=   5.4s  decay=1.09x/100it  ETA=8301it (30s) (up)  ps_avg=61.1/up
+[  2000] |duv|=7.874e-01  |div|=4.806e-05  t=   7.5s  decay=1.06x/100it  ETA=12435it (47s) (up)  ps_avg=65.8/up
+[  2500] |duv|=6.451e-01  |div|=3.444e-05  t=   9.5s  decay=1.04x/100it  ETA=16226it (1.0min) (up)  ps_avg=68.6/up
+[  3000] |duv|=5.754e-01  |div|=2.557e-05  t=  11.6s  decay=1.02x/100it  ETA=27799it (1.8min) (up)  ps_avg=70.5/up
+[  3500] |duv|=5.137e-01  |div|=1.310e-05  t=  13.8s  decay=1.02x/100it  ETA=27490it (1.8min)  ps_avg=73.5/up
+[  4000] |duv|=4.587e-01  |div|=1.250e-05  t=  16.1s  decay=1.02x/100it  ETA=27084it (1.8min)  ps_avg=76.3/up
+[  4500] |duv|=4.096e-01  |div|=1.102e-05  t=  18.4s  decay=1.02x/100it  ETA=26587it (1.8min)  ps_avg=78.5/up
+[  5000] |duv|=3.658e-01  |div|=1.084e-05  t=  20.7s  decay=1.02x/100it  ETA=26074it (1.8min)  ps_avg=80.3/up
+[  5500] |duv|=3.267e-01  |div|=1.617e-05  t=  22.7s  decay=1.02x/100it  ETA=25570it (1.8min)  ps_avg=80.8/=
+[  6000] |duv|=2.917e-01  |div|=1.441e-05  t=  24.7s  decay=1.02x/100it  ETA=25086it (1.7min)  ps_avg=80.7/=
+[  6500] |duv|=2.606e-01  |div|=1.585e-05  t=  26.6s  decay=1.02x/100it  ETA=24622it (1.7min)  ps_avg=80.1/=
+[  7000] |duv|=2.328e-01  |div|=1.374e-05  t=  28.4s  decay=1.02x/100it  ETA=24193it (1.6min)  ps_avg=78.9/=
+[  7500] |duv|=2.081e-01  |div|=1.160e-05  t=  30.2s  decay=1.02x/100it  ETA=23761it (1.6min)  ps_avg=77.6/=
+[  8000] |duv|=1.860e-01  |div|=1.323e-05  t=  31.9s  decay=1.02x/100it  ETA=23334it (1.6min)  ps_avg=76.2/=
+[  8500] |duv|=1.663e-01  |div|=1.108e-05  t=  33.7s  decay=1.02x/100it  ETA=22872it (1.5min)  ps_avg=75.4/=
+[  9000] |duv|=1.488e-01  |div|=1.111e-05  t=  35.5s  decay=1.02x/100it  ETA=22404it (1.5min)  ps_avg=74.8/=
+[  9500] |duv|=1.330e-01  |div|=1.096e-05  t=  37.3s  decay=1.02x/100it  ETA=21862it (1.4min)  ps_avg=74.2/=
+[ 10000] |duv|=1.189e-01  |div|=1.067e-05  t=  39.1s  decay=1.02x/100it  ETA=21235it (1.4min)  ps_avg=73.7/=
+[ 10500] |duv|=1.061e-01  |div|=1.024e-05  t=  40.9s  decay=1.02x/100it  ETA=20518it (1.3min)  ps_avg=73.2/=
+[ 11000] |duv|=9.451e-02  |div|=9.740e-06  t=  42.7s  decay=1.02x/100it  ETA=19658it (1.3min)  ps_avg=72.8/=
+[ 11500] |duv|=8.394e-02  |div|=9.160e-06  t=  44.5s  decay=1.02x/100it  ETA=18674it (1.2min)  ps_avg=72.4/=
+[ 12000] |duv|=7.426e-02  |div|=8.434e-06  t=  46.3s  decay=1.02x/100it  ETA=17587it (1.1min)  ps_avg=72.1/=
+[ 12500] |duv|=6.538e-02  |div|=7.792e-06  t=  48.1s  decay=1.03x/100it  ETA=16410it (1.1min)  ps_avg=71.7/=
+[ 13000] |duv|=5.724e-02  |div|=7.060e-06  t=  49.9s  decay=1.03x/100it  ETA=15215it (58s)  ps_avg=71.5/=
+[ 13500] |duv|=4.979e-02  |div|=6.336e-06  t=  51.7s  decay=1.03x/100it  ETA=14004it (54s)  ps_avg=71.2/=
+[ 14000] |duv|=4.300e-02  |div|=5.623e-06  t=  53.4s  decay=1.03x/100it  ETA=12843it (49s)  ps_avg=70.9/=
+[ 14500] |duv|=3.687e-02  |div|=4.936e-06  t=  55.1s  decay=1.03x/100it  ETA=11718it (45s)  ps_avg=70.7/=
+[ 15000] |duv|=3.137e-02  |div|=4.286e-06  t=  57.0s  decay=1.03x/100it  ETA=10660it (40s)  ps_avg=70.5/=
+[ 15500] |duv|=2.647e-02  |div|=3.683e-06  t=  58.8s  decay=1.03x/100it  ETA=9657it (37s)  ps_avg=70.2/=
+[ 16000] |duv|=2.217e-02  |div|=3.133e-06  t=  60.7s  decay=1.04x/100it  ETA=8724it (33s)  ps_avg=70.1/=
+[ 16500] |duv|=1.840e-02  |div|=2.638e-06  t=  62.5s  decay=1.04x/100it  ETA=7830it (30s)  ps_avg=69.9/=
+[ 17000] |duv|=1.516e-02  |div|=2.201e-06  t=  64.4s  decay=1.04x/100it  ETA=7000it (27s)  ps_avg=69.7/=
+[ 17500] |duv|=1.238e-02  |div|=1.818e-06  t=  66.3s  decay=1.04x/100it  ETA=6206it (23s)  ps_avg=69.5/=
+[ 18000] |duv|=1.002e-02  |div|=1.488e-06  t=  68.0s  decay=1.04x/100it  ETA=5452it (21s)  ps_avg=69.4/=
+[ 18500] |duv|=8.038e-03  |div|=1.206e-06  t=  69.8s  decay=1.05x/100it  ETA=4733it (18s) (down)  ps_avg=69.2/=
+[ 19000] |duv|=6.391e-03  |div|=9.676e-07  t=  71.6s  decay=1.05x/100it  ETA=4044it (15s) (down)  ps_avg=69.1/=
+[ 19500] |duv|=5.033e-03  |div|=7.689e-07  t=  73.4s  decay=1.05x/100it  ETA=3384it (13s) (down)  ps_avg=69.0/=
+[ 20000] |duv|=3.925e-03  |div|=6.047e-07  t=  75.2s  decay=1.05x/100it  ETA=2748it (10s) (down)  ps_avg=68.8/=
+[ 20500] |duv|=3.028e-03  |div|=4.705e-07  t=  76.9s  decay=1.05x/100it  ETA=2136it (8s) (down)  ps_avg=68.7/=
+[ 21000] |duv|=2.311e-03  |div|=3.618e-07  t=  78.6s  decay=1.06x/100it  ETA=1549it (6s) (down)  ps_avg=68.6/=
+[ 21500] |duv|=1.751e-03  |div|=2.748e-07  t=  80.4s  decay=1.06x/100it  ETA=1010it (4s) (down)  ps_avg=68.5/=
+[ 22000] |duv|=1.319e-03  |div|=2.058e-07  t=  82.1s  decay=1.06x/100it  ETA=489it (2s) (down)  ps_avg=68.4/=
+
+Converged at iter 22465, |duv_rel| = 9.999e-04
+
+WARNING: SOR hit PS_MAX_ITER=300 in 2/22465 outer iter
+----------------------------------------------------------------------
+Time: 83.78s
+Error U: L2=1.3416e-03  Linf=2.7179e-03
+Error V: L2=4.3320e-04  Linf=1.5245e-03
+Mass divergence: 1.5506e-07
+
+--- profiling (accumulated, s) ---
+  momentum    :     7.27
+  sor         :    61.91
+  correction  :     5.96
+  bcs         :     2.22
+  residual    :     4.43
+  copy_old    :     1.57
+  download    :     0.00
+  SOR syncs  : 95914
+
+-----------------------------------------------------
+
+  iterations: 22465
+        time: 8.3779e+01
+    err_u_l2: 1.3416e-03
+   err_u_inf: 2.7179e-03
+    err_v_l2: 4.3320e-04
+   err_v_inf: 1.5245e-03
+        mass: 1.5506e-07
+  ps_cap_hits: 2
+   converged: True
+
+# Finished: 2026-10-29T23:42:25.237064  (elapsed 83.8 s)

@@ -1,0 +1,71 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_g64_k_128_att_1.txt
+# Started: 2026-10-29T23:40:23.442565
+# version=v1 solver=g64 case=k NX=128 NY=128 attempt=1
+#--------------------------------------------------------------------
+SIMPLE GPU (PyOpenCL, float64) solver | NX=128 NY=128 | RE=40.0
+hx=0.01172 hy=0.00781 DT=4.883e-04 LAMBDA=-0.963741
+pressure: red-black SOR, PS_OMEGA=1.95209, batch=16, PS_TOL_REL=1.0e-05
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters)  decay=xN per 100it  ETA = local extrap
+----------------------------------------------------------------------
+[   200] |duv|=1.916e+00  |div|=2.930e-04  t=   0.7s  ps_avg=82.5
+[   400] |duv|=9.554e-01  |div|=7.451e-05  t=   1.4s  decay=1.42x/100it  ETA=1972it (7s)  ps_avg=82.0/=
+[   600] |duv|=6.549e-01  |div|=3.587e-05  t=   2.0s  decay=1.21x/100it  ETA=3434it (11s) (up)  ps_avg=81.4/=
+[   800] |duv|=5.431e-01  |div|=3.281e-05  t=   2.7s  decay=1.10x/100it  ETA=6732it (22s) (up)  ps_avg=81.0/=
+[  1000] |duv|=4.515e-01  |div|=2.711e-05  t=   3.3s  decay=1.10x/100it  ETA=6617it (22s)  ps_avg=80.9/=
+[  1200] |duv|=3.758e-01  |div|=2.378e-05  t=   4.1s  decay=1.10x/100it  ETA=6463it (22s)  ps_avg=83.1/up
+[  1400] |duv|=3.129e-01  |div|=2.338e-05  t=   4.8s  decay=1.10x/100it  ETA=6274it (22s)  ps_avg=85.0/up
+[  1600] |duv|=2.608e-01  |div|=2.219e-05  t=   5.6s  decay=1.10x/100it  ETA=6103it (21s)  ps_avg=86.3/=
+[  1800] |duv|=2.175e-01  |div|=2.039e-05  t=   6.3s  decay=1.10x/100it  ETA=5928it (21s)  ps_avg=87.4/=
+[  2000] |duv|=1.815e-01  |div|=2.000e-05  t=   7.0s  decay=1.09x/100it  ETA=5759it (20s)  ps_avg=88.1/=
+[  2200] |duv|=1.516e-01  |div|=2.116e-05  t=   7.7s  decay=1.09x/100it  ETA=5580it (20s)  ps_avg=87.7/=
+[  2400] |duv|=1.266e-01  |div|=1.770e-05  t=   8.3s  decay=1.09x/100it  ETA=5365it (19s)  ps_avg=87.0/=
+[  2600] |duv|=1.055e-01  |div|=1.444e-05  t=   9.0s  decay=1.10x/100it  ETA=5108it (18s)  ps_avg=86.5/=
+[  2800] |duv|=8.745e-02  |div|=1.486e-05  t=   9.6s  decay=1.10x/100it  ETA=4770it (16s)  ps_avg=85.5/=
+[  3000] |duv|=7.188e-02  |div|=1.135e-05  t=  10.2s  decay=1.10x/100it  ETA=4361it (15s)  ps_avg=84.1/=
+[  3200] |duv|=5.836e-02  |div|=8.483e-06  t=  10.8s  decay=1.11x/100it  ETA=3904it (13s)  ps_avg=82.8/=
+[  3400] |duv|=4.668e-02  |div|=6.942e-06  t=  11.4s  decay=1.12x/100it  ETA=3442it (12s)  ps_avg=81.7/=
+[  3600] |duv|=3.671e-02  |div|=5.515e-06  t=  12.0s  decay=1.13x/100it  ETA=2998it (10s)  ps_avg=80.7/=
+[  3800] |duv|=2.835e-02  |div|=4.264e-06  t=  12.5s  decay=1.14x/100it  ETA=2587it (9s) (down)  ps_avg=79.8/=
+[  4000] |duv|=2.148e-02  |div|=3.215e-06  t=  13.1s  decay=1.15x/100it  ETA=2211it (7s) (down)  ps_avg=79.1/=
+[  4200] |duv|=1.597e-02  |div|=2.366e-06  t=  13.7s  decay=1.16x/100it  ETA=1870it (6s) (down)  ps_avg=78.3/=
+[  4400] |duv|=1.164e-02  |div|=1.702e-06  t=  14.3s  decay=1.17x/100it  ETA=1554it (5s) (down)  ps_avg=77.7/=
+[  4600] |duv|=8.329e-03  |div|=1.195e-06  t=  14.9s  decay=1.18x/100it  ETA=1265it (4s) (down)  ps_avg=77.1/=
+[  4800] |duv|=5.837e-03  |div|=8.200e-07  t=  15.5s  decay=1.19x/100it  ETA=992it (3s) (down)  ps_avg=76.5/=
+[  5000] |duv|=4.001e-03  |div|=5.484e-07  t=  16.0s  decay=1.21x/100it  ETA=734it (2s) (down)  ps_avg=76.0/=
+[  5200] |duv|=2.683e-03  |div|=3.567e-07  t=  16.6s  decay=1.22x/100it  ETA=494it (2s) (down)  ps_avg=75.6/=
+[  5400] |duv|=1.754e-03  |div|=2.247e-07  t=  17.2s  decay=1.24x/100it  ETA=264it (1s) (down)  ps_avg=75.1/=
+[  5600] |duv|=1.114e-03  |div|=1.361e-07  t=  17.8s  decay=1.25x/100it  ETA=48it (0s) (down)  ps_avg=74.8/=
+
+Converged at iter 5646, |duv_rel| = 9.989e-04
+
+WARNING: SOR hit PS_MAX_ITER=300 in 1/5646 outer iter
+----------------------------------------------------------------------
+Time: 17.91s
+Error U: L2=2.6603e-03  Linf=5.4764e-03
+Error V: L2=8.4407e-04  Linf=2.6318e-03
+Mass divergence: 1.2050e-07
+
+--- profiling (accumulated, s) ---
+  momentum    :     1.74
+  sor         :    12.48
+  correction  :     1.51
+  bcs         :     0.56
+  residual    :     1.10
+  copy_old    :     0.41
+  download    :     0.00
+  SOR syncs  : 26347
+
+-----------------------------------------------------
+
+  iterations: 5646
+        time: 1.7906e+01
+    err_u_l2: 2.6603e-03
+   err_u_inf: 5.4764e-03
+    err_v_l2: 8.4407e-04
+   err_v_inf: 2.6318e-03
+        mass: 1.2050e-07
+  ps_cap_hits: 1
+   converged: True
+
+# Finished: 2026-10-29T23:40:41.351418  (elapsed 17.9 s)

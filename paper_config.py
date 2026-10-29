@@ -15,7 +15,7 @@ RHO = 1.0
 X_MIN, X_MAX = -0.5, 1.0
 Y_MIN, Y_MAX = -0.5, 0.5
 
-N = 256
+N = 32
 NX, NY = N, N      # меняется вручную — всё производное пересчитается
 
 HX    = (X_MAX - X_MIN) / NX
@@ -27,7 +27,7 @@ CFL_DIFF = 0.2
 DT = CFL_DIFF * H_MIN * H_MIN / NU
 
 # --- Solver controls ---
-MAX_ITER      = 50000
+MAX_ITER      = 200000
 MAX_WALL_TIME = 0        # жёсткий стоп по времени (сек), 0 = выключено
 
 # --- ОТНОСИТЕЛЬНЫЕ допуски (одинаковая точность на всех сетках) ---
@@ -45,3 +45,6 @@ PS_MAX_ITER = 300        # запас; при оптим. omega хватает ~
 
 # --- Output ---
 PRINT_EVERY = 100
+
+# --- GPU ---
+USE_FP64 = True
