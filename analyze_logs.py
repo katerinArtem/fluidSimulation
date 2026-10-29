@@ -10,6 +10,8 @@ analyze_logs.py
     python analyze_logs.py --logs ./logs --out ./parsed --plots ./plots
     python analyze_logs.py --logs ./logs --case k --no-plot
     python analyze_logs.py --logs ./logs --excel
+    python analyze_logs.py --logs ./logs --plots ./plots --bw     # только ч/б
+    python analyze_logs.py --logs ./logs --plots ./plots --both   # цвет + ч/б
 """
 
 from __future__ import annotations
@@ -40,10 +42,10 @@ RE_GRID = re.compile(
     r"DT=(?P<dt>[-\d.eE+]+)\s+LAMBDA=(?P<lam>[-\d.eE+]+)"
 )
 RE_PSOMEGA = re.compile(r"PS_OMEGA=(?P<omega>[-\d.eE+]+)")
-RE_PS_TOL = re.compile(r"PS_TOL_REL=(?P<tol>[-\d.eE+]+)")
+RE_PS_TOL  = re.compile(r"PS_TOL_REL=(?P<tol>[-\d.eE+]+)")
 RE_BATCH   = re.compile(r"\bbatch=(?P<batch>\d+)")
 
-# строка истории: [  100] |duv|=.. |div|=.. t=..s ps_avg=.. [decay=.. ETA=..]
+# строка истории: [  100] |duv|=.. |div|=.. t=..s ... ps_avg=.. [decay=.. ETA=..]
 RE_ITER = re.compile(
     r"^\[\s*(?P<it>\d+)\]\s+"
     r"\|duv\|=(?P<duv>\S+)\s+"
@@ -51,8 +53,8 @@ RE_ITER = re.compile(
     r"(?:\s+t=\s*(?P<t>[\d.]+)s)?"
 )
 RE_PS_AVG = re.compile(r"ps_avg=(?P<ps>[\d.]+)")
-RE_DECAY = re.compile(r"decay=(?P<decay>[\d.]+)x/100it")
-RE_ETA   = re.compile(r"ETA=(?P<eta>\d+)it")
+RE_DECAY  = re.compile(r"decay=(?P<decay>[\d.]+)x/100it")
+RE_ETA    = re.compile(r"ETA=(?P<eta>\d+)it")
 
 RE_CONVERGED = re.compile(
     r"^Converged at iter\s+(?P<it>\d+),\s+\|duv_rel\|\s*=\s*(?P<duv>\S+)"
@@ -159,17 +161,17 @@ def parse_log(path: Path):
         # --- строка истории итераций ---
         m = RE_ITER.match(line)
         if m:
-            dm = RE_DECAY.search(line)
-            em = RE_ETA.search(line)
+            dm  = RE_DECAY.search(line)
+            em  = RE_ETA.search(line)
             psm = RE_PS_AVG.search(line)
             history.append({
                 "run_id": path.stem,
                 "iter": int(m.group("it")),
                 "duv": _to_float(m.group("duv")),
                 "div": _to_float(m.group("div")),
-                "t": _to_float(m.group("t")),
-                "ps_avg":  _to_float(psm.group("ps")) if psm else None,
-                "decay": _to_float(dm.group("decay")) if dm else None,
+                "t":   _to_float(m.group("t")),
+                "ps_avg": _to_float(psm.group("ps")) if psm else None,
+                "decay":  _to_float(dm.group("decay")) if dm else None,
                 "eta_it": int(em.group("eta")) if em else None,
             })
             continue
@@ -177,9 +179,9 @@ def parse_log(path: Path):
         # --- шаги сетки ---
         m = RE_GRID.search(line)
         if m:
-            meta["hx"] = _to_float(m.group("hx"))
-            meta["hy"] = _to_float(m.group("hy"))
-            meta["dt"] = _to_float(m.group("dt"))
+            meta["hx"]  = _to_float(m.group("hx"))
+            meta["hy"]  = _to_float(m.group("hy"))
+            meta["dt"]  = _to_float(m.group("dt"))
             meta["lam"] = _to_float(m.group("lam"))
             continue
 
@@ -188,7 +190,7 @@ def parse_log(path: Path):
             m = RE_PSOMEGA.search(line)
             if m:
                 meta["ps_omega"] = _to_float(m.group("omega"))
-        if meta["ps_tol_rel"] is None:                    # <-- NEW
+        if meta["ps_tol_rel"] is None:
             m = RE_PS_TOL.search(line)
             if m:
                 meta["ps_tol_rel"] = _to_float(m.group("tol"))
@@ -201,13 +203,13 @@ def parse_log(path: Path):
         m = RE_CONVERGED.match(line)
         if m:
             meta["conv_iter"] = int(m.group("it"))
-            meta["conv_duv"] = _to_float(m.group("duv"))
+            meta["conv_duv"]  = _to_float(m.group("duv"))
             continue
 
         # --- предупреждение SOR ---
         m = RE_SOR_WARN.search(line)
         if m:
-            meta["sor_warn_hits"] = int(m.group("hits"))
+            meta["sor_warn_hits"]  = int(m.group("hits"))
             meta["sor_warn_total"] = int(m.group("total"))
             continue
 
@@ -220,13 +222,13 @@ def parse_log(path: Path):
         # --- ошибки ---
         m = RE_ERR_U.match(line)
         if m:
-            meta["err_u_l2"] = _to_float(m.group("l2"))
+            meta["err_u_l2"]  = _to_float(m.group("l2"))
             meta["err_u_inf"] = _to_float(m.group("inf"))
             continue
 
         m = RE_ERR_V.match(line)
         if m:
-            meta["err_v_l2"] = _to_float(m.group("l2"))
+            meta["err_v_l2"]  = _to_float(m.group("l2"))
             meta["err_v_inf"] = _to_float(m.group("inf"))
             continue
 
@@ -276,23 +278,54 @@ def parse_log(path: Path):
 # Сводные таблицы
 # ---------------------------------------------------------------------------
 
-def select_representatives(runs: pd.DataFrame) -> pd.DataFrame:
-    """Если на одну (case, solver, nx, ny) несколько попыток — оставить одну:
-    сначала сходившуюся, из них самую быструю."""
+def select_representatives(runs: pd.DataFrame, policy: str = "last") -> pd.DataFrame:
+    """
+    Для каждой (case, solver, nx, ny) оставить одну попытку:
+      * policy='last' — ПОСЛЕДНЮЮ (наибольший attempt; при равенстве — самый
+        поздний started/finished). Это поведение по умолчанию.
+      * policy='best' — сходившуюся и самую быструю (старое поведение).
+    Все попытки остаются в runs.csv, выбранная помечается флагом `selected`.
+    """
     df = runs.copy()
     if df.empty:
         df["selected"] = []
         return df
 
-    conv = df["converged"].apply(lambda v: bool(v) if pd.notna(v) else False)
-    t = pd.to_numeric(df["time"], errors="coerce").fillna(np.inf)
-
-    df = df.join(pd.DataFrame({"_conv": (~conv).astype(int), "_time": t}, index=df.index))
     keys = ["case", "solver", "nx", "ny"]
-    idx = (df.sort_values(["_conv", "_time"], kind="mergesort")
-             .drop_duplicates(subset=keys, keep="first").index)
+
+    if policy == "best":
+        conv = df["converged"].apply(lambda v: bool(v) if pd.notna(v) else False)
+        t = pd.to_numeric(df["time"], errors="coerce").fillna(np.inf)
+        df = df.join(pd.DataFrame({"_conv": (~conv).astype(int), "_time": t},
+                                  index=df.index))
+        idx = (df.sort_values(["_conv", "_time"], kind="mergesort")
+                 .drop_duplicates(subset=keys, keep="first").index)
+        df["selected"] = df.index.isin(idx)
+        return df.drop(columns=["_conv", "_time"])
+
+    # policy == "last"
+    n = len(df)
+
+    if "attempt" in df.columns:
+        attempt = pd.to_numeric(df["attempt"], errors="coerce").fillna(-1)
+    else:
+        attempt = pd.Series([-1] * n, index=df.index, dtype="int64")
+
+    def _as_datetime(col: str) -> pd.Series:
+        if col in df.columns:
+            return pd.to_datetime(df[col], errors="coerce", utc=True)
+        return pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
+
+    started  = _as_datetime("started")
+    finished = _as_datetime("finished")
+    started  = started.fillna(finished)  # fallback, если started пуст
+
+    df = df.join(pd.DataFrame({"_attempt": attempt, "_started": started},
+                              index=df.index))
+    idx = (df.sort_values(["_attempt", "_started"], kind="mergesort")
+             .drop_duplicates(subset=keys, keep="last").index)
     df["selected"] = df.index.isin(idx)
-    return df.drop(columns=["_conv", "_time"])
+    return df.drop(columns=["_attempt", "_started"])
 
 
 def pivot(runs: pd.DataFrame, value: str) -> pd.DataFrame:
@@ -318,38 +351,85 @@ def speedup_table(runs: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Графики
+# Стили графиков (одна таблица на цвет / ч-б / линию / маркер / штриховку)
 # ---------------------------------------------------------------------------
 
-SOLVER_LABEL = {
-    "s":   "scalar (CPU)",
-    "v":   "vectorized (NumPy)",
-    "g":   "GPU (OpenCL, f32)",
-    "g64": "GPU (OpenCL, f64)",
-}
-SOLVER_COLOR = {
-    "s":   "#1f77b4",
-    "v":   "#ff7f0e",
-    "g":   "#2ca02c",
-    "g64": "#9467bd",   # фиолетовый, чтобы отличать от g
+_SOLVER_STYLE = {
+    "s":   dict(label="scalar (CPU)",       color="#1f77b4", ls="-",  marker="o",
+                hatch="",   gray="0.20"),
+    "v":   dict(label="vectorized (NumPy)", color="#ff7f0e", ls="--", marker="s",
+                hatch="//", gray="0.45"),
+    "g":   dict(label="GPU (OpenCL, f32)",  color="#2ca02c", ls="-.", marker="^",
+                hatch="xx", gray="0.65"),
+    "g64": dict(label="GPU (OpenCL, f64)",  color="#9467bd", ls=":",  marker="D",
+                hatch="..", gray="0.85"),
 }
 _SOLVER_PREF = ["s", "v", "g", "g64"]
 
+_PROFILE_PHASES = ["prof_momentum", "prof_sor", "prof_correction", "prof_bcs",
+                   "prof_residual", "prof_copy_old", "prof_download"]
+_PROFILE_HATCH  = ["", "//", "xx", "..", "++", "oo", "\\\\"]
+_PROFILE_GRAY   = ["0.90", "0.75", "0.60", "0.45", "0.30", "0.18", "0.05"]
 
-def _order_solvers(solvers):
-    return sorted(solvers, key=lambda s: (_SOLVER_PREF.index(s) if s in _SOLVER_PREF else 99, str(s)))
+
+def _style(solver):
+    return _SOLVER_STYLE.get(
+        solver,
+        dict(label=f"solver={solver}", color="black", ls="-", marker="o",
+             hatch="", gray="0.5"),
+    )
 
 
 def _label(solver):
-    return SOLVER_LABEL.get(solver, f"solver={solver}")
+    return _style(solver)["label"]
 
 
-def _color(solver):
-    return SOLVER_COLOR.get(solver, None)
+def _order_solvers(solvers):
+    return sorted(solvers,
+                  key=lambda s: (_SOLVER_PREF.index(s) if s in _SOLVER_PREF else 99, str(s)))
 
 
-def _plot_convergence(plt, runs, hist, value, ylabel, fname, outdir,
-                      x="iter", xlabel="номер итерации", logy=True, hline=None, title=""):
+def _line_kwargs(solver, bw):
+    """kwargs для ax.plot(...). В bw-режиме — чёрная линия + открытый/закрытый маркер."""
+    s = _style(solver)
+    kw = dict(label=s["label"], linestyle=s["ls"], marker=s["marker"],
+              linewidth=1.8, markersize=5.0)
+    if bw:
+        kw.update(color="black", markeredgecolor="black")
+        kw["markerfacecolor"] = "white" if solver in ("v", "g64") else "black"
+    else:
+        kw["color"] = s["color"]
+    return kw
+
+
+def _bar_kwargs(solver, bw):
+    """kwargs для ax.bar(...). В bw-режиме — серый + штриховка + чёрный контур."""
+    s = _style(solver)
+    kw = dict(label=s["label"], hatch=s["hatch"],
+              edgecolor="black", linewidth=0.8)
+    kw["color"] = s["gray"] if bw else s["color"]
+    return kw
+
+
+def _markevery(n):
+    """Разреживание маркеров, чтобы плотные кривые не выглядели забором."""
+    return 1 if n <= 20 else max(1, n // 10)
+
+
+def _outname(name, bw):
+    if not bw:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    return f"{stem}_bw.{ext}" if dot else f"{name}_bw"
+
+
+# ---------------------------------------------------------------------------
+# Графики
+# ---------------------------------------------------------------------------
+
+def _plot_convergence(plt, runs, hist, value, ylabel, fname, outdir, bw,
+                      x="iter", xlabel="номер итерации",
+                      logy=True, hline=None, title=""):
     sel = runs[runs["selected"]]
     nxs = sorted(sel["nx"].dropna().unique())
     if sel.empty or hist.empty or not nxs:
@@ -357,8 +437,8 @@ def _plot_convergence(plt, runs, hist, value, ylabel, fname, outdir,
 
     ncol = min(3, len(nxs))
     nrow = int(np.ceil(len(nxs) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(5.0 * ncol, 3.8 * nrow), squeeze=False)
-
+    fig, axes = plt.subplots(nrow, ncol, figsize=(5.0 * ncol, 3.8 * nrow),
+                             squeeze=False)
     handles, labels = [], []
     for ax, nx in zip(axes.flat, nxs):
         sub = sel[sel["nx"] == nx]
@@ -370,13 +450,13 @@ def _plot_convergence(plt, runs, hist, value, ylabel, fname, outdir,
             h = h.sort_values(x)
             if h.empty:
                 continue
-            line, = ax.plot(h[x], h[value], lw=1.6, color=_color(solver), label=_label(solver))
-            if _label(solver) not in labels:
-                handles.append(line)
-                labels.append(_label(solver))
+            kw = _line_kwargs(solver, bw)
+            kw["markevery"] = _markevery(len(h))
+            line, = ax.plot(h[x], h[value], **kw)
+            if kw["label"] not in labels:
+                handles.append(line); labels.append(kw["label"])
         ax.set_title(f"NX = NY = {int(nx)}")
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
+        ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
         ax.set_xlim(left=0)
         if logy:
             ax.set_yscale("log")
@@ -386,67 +466,65 @@ def _plot_convergence(plt, runs, hist, value, ylabel, fname, outdir,
     for ax in axes.flat[len(nxs):]:
         ax.set_visible(False)
     if handles:
-        fig.legend(handles, labels, loc="lower center", ncol=len(handles), frameon=False)
+        fig.legend(handles, labels, loc="lower center",
+                   ncol=min(len(handles), 4), frameon=False)
     if title:
         fig.suptitle(title)
     fig.tight_layout(rect=(0, 0.05, 1, 0.96 if title else 1.0))
-    fig.savefig(outdir / fname, bbox_inches="tight")
+    fig.savefig(outdir / _outname(fname, bw), bbox_inches="tight")
     plt.close(fig)
 
 
-def _plot_metric_vs_nx(plt, runs, value, ylabel, fname, outdir, loglog=True, title=""):
+def _plot_metric_vs_nx(plt, runs, value, ylabel, fname, outdir, bw,
+                       loglog=True, title=""):
     if value not in runs.columns:
         return
     sel = runs[runs["selected"]].dropna(subset=[value])
     if sel.empty:
         return
-
     fig, ax = plt.subplots(figsize=(7.0, 4.6))
     for solver in _order_solvers(sel["solver"].dropna().unique()):
         sub = sel[sel["solver"] == solver].sort_values("nx")
         if sub.empty:
             continue
-        ax.plot(sub["nx"], sub[value], marker="o", ms=6, lw=1.8,
-                color=_color(solver), label=_label(solver))
+        ax.plot(sub["nx"], sub[value], **_line_kwargs(solver, bw))
     if loglog:
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-    ax.set_xlabel("NX = NY")
-    ax.set_ylabel(ylabel)
+        ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel("NX = NY"); ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(outdir / fname, bbox_inches="tight")
+    fig.savefig(outdir / _outname(fname, bw), bbox_inches="tight")
     plt.close(fig)
 
 
-def _plot_speedup(plt, runs, fname, outdir):
+def _plot_speedup(plt, runs, fname, outdir, bw):
     sp = speedup_table(runs)
     if sp.empty:
         return
     fig, ax = plt.subplots(figsize=(7.0, 4.6))
     for solver in sp.columns:
-        ax.plot(sp.index, sp[solver], marker="s", ms=6, lw=1.8,
-                color=_color(solver), label=f"{_label(solver)} / {_label('s')}")
+        kw = _line_kwargs(solver, bw)
+        kw["label"] = f"{kw['label']} / {_label('s')}"
+        ax.plot(sp.index, sp[solver], **kw)
     ax.axhline(1.0, color="k", ls="--", lw=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("NX = NY")
     ax.set_ylabel("ускорение  T_scalar / T_solver")
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(outdir / fname, bbox_inches="tight")
+    fig.savefig(outdir / _outname(fname, bw), bbox_inches="tight")
     plt.close(fig)
 
 
-def _plot_time_bars(plt, runs, fname, outdir):
+def _plot_time_bars(plt, runs, fname, outdir, bw):
     sel = runs[runs["selected"]].dropna(subset=["time"])
     if sel.empty:
         return
     nxs = sorted(sel["nx"].dropna().unique())
     solvers = _order_solvers(sel["solver"].dropna().unique())
     width = 0.8 / max(len(solvers), 1)
-
     fig, ax = plt.subplots(figsize=(8.0, 4.8))
     xpos = np.arange(len(nxs))
     for i, solver in enumerate(solvers):
@@ -454,38 +532,41 @@ def _plot_time_bars(plt, runs, fname, outdir):
         for nx in nxs:
             s = sel[(sel["nx"] == nx) & (sel["solver"] == solver)]["time"]
             vals.append(float(s.min()) if not s.empty else np.nan)
-        ax.bar(xpos + i * width, vals, width, color=_color(solver), label=_label(solver))
+        ax.bar(xpos + i * width, vals, width, **_bar_kwargs(solver, bw))
     ax.set_xticks(xpos + width * (len(solvers) - 1) / 2.0)
     ax.set_xticklabels([str(int(nx)) for nx in nxs])
     ax.set_yscale("log")
-    ax.set_xlabel("NX = NY")
-    ax.set_ylabel("полное время, с (лог. шкала)")
+    ax.set_xlabel("NX = NY"); ax.set_ylabel("полное время, с (лог. шкала)")
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(outdir / fname, bbox_inches="tight")
+    fig.savefig(outdir / _outname(fname, bw), bbox_inches="tight")
     plt.close(fig)
 
 
-def _plot_profile(plt, runs, fname, outdir):
-    prof_cols = ["prof_momentum", "prof_sor", "prof_correction", "prof_bcs",
-                 "prof_residual", "prof_copy_old", "prof_download"]
+def _plot_profile(plt, runs, fname, outdir, bw):
     sel = runs[runs["selected"]]
     if sel.empty:
         return
-    sub = sel[sel[prof_cols].notna().any(axis=1)]
+    sub = sel[sel[_PROFILE_PHASES].notna().any(axis=1)]
     if sub.empty:
         return
-
     labels = [f"{_label(s.solver)} NX={int(s.nx)}" for s in sub.itertuples()]
     xpos = np.arange(len(sub))
     bottoms = np.zeros(len(sub))
-
     fig, ax = plt.subplots(figsize=(max(7.0, 1.2 * len(sub) + 3), 4.8))
-    for col in prof_cols:
+    for i, col in enumerate(_PROFILE_PHASES):
         vals = sub[col].fillna(0.0).to_numpy(dtype=float)
         if not np.any(vals):
             continue
-        ax.bar(xpos, vals, bottom=bottoms, label=col.replace("prof_", ""))
+        name = col.replace("prof_", "")
+        if bw:
+            ax.bar(xpos, vals, bottom=bottoms, label=name,
+                   color=_PROFILE_GRAY[i], edgecolor="black",
+                   hatch=_PROFILE_HATCH[i], linewidth=0.6)
+        else:
+            ax.bar(xpos, vals, bottom=bottoms, label=name,
+                   edgecolor="black", linewidth=0.6,
+                   hatch=_PROFILE_HATCH[i])
         bottoms += vals
     ax.set_xticks(xpos)
     ax.set_xticklabels(labels, rotation=30, ha="right")
@@ -493,40 +574,55 @@ def _plot_profile(plt, runs, fname, outdir):
     ax.set_title("Профиль GPU-солвера по стадиям")
     ax.legend(frameon=False, ncol=2, fontsize=8)
     fig.tight_layout()
-    fig.savefig(outdir / fname, bbox_inches="tight")
+    fig.savefig(outdir / _outname(fname, bw), bbox_inches="tight")
     plt.close(fig)
 
 
-def make_plots(runs: pd.DataFrame, hist: pd.DataFrame, outdir: Path):
+def make_plots(runs: pd.DataFrame, hist: pd.DataFrame, outdir: Path, bw: bool = False):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.rcParams.update({
-        "axes.grid": True, "grid.alpha": 0.25, "font.size": 10,
-        "figure.dpi": 110, "savefig.dpi": 160,
+        "axes.grid":       True,
+        "grid.alpha":      0.4 if bw else 0.25,
+        "grid.color":      "black" if bw else "#888888",
+        "grid.linestyle":  ":" if bw else "-",
+        "font.size":       10,
+        "figure.dpi":      110,
+        "savefig.dpi":     160,
+        "axes.edgecolor":  "black",
+        "axes.labelcolor": "black",
+        "xtick.color":     "black",
+        "ytick.color":     "black",
     })
 
-    _plot_convergence(plt, runs, hist, "duv", r"$|duv|$", "conv_duv.png", outdir,
-                      logy=True, hline=1e-3, title="Сходимость по |duv|")
-    _plot_convergence(plt, runs, hist, "div", r"$|div|$", "conv_div.png", outdir,
-                      logy=True, title="Дивергенция по итерациям")
-    _plot_convergence(plt, runs, hist, "duv", r"$|duv|$", "conv_duv_time.png", outdir,
-                      x="t", xlabel="время, с", logy=True, hline=1e-3,
+    _plot_convergence(plt, runs, hist, "duv", r"$|duv|$", "conv_duv.png",
+                      outdir, bw, logy=True, hline=1e-3,
+                      title="Сходимость по |duv|")
+    _plot_convergence(plt, runs, hist, "div", r"$|div|$", "conv_div.png",
+                      outdir, bw, logy=True,
+                      title="Дивергенция по итерациям")
+    _plot_convergence(plt, runs, hist, "duv", r"$|duv|$", "conv_duv_time.png",
+                      outdir, bw, x="t", xlabel="время, с", logy=True, hline=1e-3,
                       title="Сходимость по |duv| от времени")
 
-    _plot_metric_vs_nx(plt, runs, "time", "полное время, с", "time_vs_nx.png", outdir,
+    _plot_metric_vs_nx(plt, runs, "time", "полное время, с",
+                       "time_vs_nx.png", outdir, bw,
                        title="Время решения vs размер сетки")
-    _plot_metric_vs_nx(plt, runs, "iterations", "число итераций", "iters_vs_nx.png", outdir,
+    _plot_metric_vs_nx(plt, runs, "iterations", "число итераций",
+                       "iters_vs_nx.png", outdir, bw,
                        title="Число итераций vs размер сетки")
     _plot_metric_vs_nx(plt, runs, "time_per_iter", "время на итерацию, с",
-                       "time_per_iter_vs_nx.png", outdir,
+                       "time_per_iter_vs_nx.png", outdir, bw,
                        title="Стоимость одной итерации")
-    _plot_metric_vs_nx(plt, runs, "err_u_l2", r"$L_2$ ошибка U", "err_u_l2_vs_nx.png", outdir,
+    _plot_metric_vs_nx(plt, runs, "err_u_l2", r"$L_2$ ошибка U",
+                       "err_u_l2_vs_nx.png", outdir, bw,
                        title="Точность vs размер сетки")
-    _plot_speedup(plt, runs, "speedup.png", outdir)
-    _plot_time_bars(plt, runs, "time_bars.png", outdir)
-    _plot_profile(plt, runs, "profile.png", outdir)
+
+    _plot_speedup(plt, runs, "speedup.png", outdir, bw)
+    _plot_time_bars(plt, runs, "time_bars.png", outdir, bw)
+    _plot_profile(plt, runs, "profile.png", outdir, bw)
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +644,10 @@ def main(argv=None):
     ap.add_argument("--no-plot", action="store_true", help="не строить графики")
     ap.add_argument("--excel", action="store_true",
                     help="дополнительно сохранить всё в один .xlsx")
+    ap.add_argument("--bw", action="store_true",
+                    help="чёрно-белый стиль (файлы с суффиксом *_bw.png)")
+    ap.add_argument("--both", action="store_true",
+                    help="сгенерировать и цветной, и ч/б варианты")
     args = ap.parse_args(argv)
 
     if args.logs.is_file():
@@ -634,8 +734,13 @@ def main(argv=None):
     # ---------------- графики ----------------
     if not args.no_plot:
         args.plots.mkdir(parents=True, exist_ok=True)
-        make_plots(runs, hist_full, args.plots)
-        print(f"\nГрафики: {args.plots.resolve()}")
+        if args.both:
+            make_plots(runs, hist_full, args.plots, bw=False)
+            make_plots(runs, hist_full, args.plots, bw=True)
+            print(f"\nГрафики (цвет + ч/б): {args.plots.resolve()}")
+        else:
+            make_plots(runs, hist_full, args.plots, bw=args.bw)
+            print(f"\nГрафики ({'ч/б' if args.bw else 'цвет'}): {args.plots.resolve()}")
     print(f"Данные:  {args.out.resolve()}")
 
 
