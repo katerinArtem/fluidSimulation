@@ -1,0 +1,89 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_s_k_128_att_2.txt
+# Started: 2026-10-29T16:02:54.653813
+# version=v1 solver=s case=k NX=128 NY=128 attempt=2
+#--------------------------------------------------------------------
+SIMPLE scalar solver | NX=128 NY=128 | RE=40.0
+hx=0.01172 hy=0.00781 DT=4.883e-04 LAMBDA=-0.963741
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters, trend)  decay=xN per 100it (≈1.00 = stalled, <1.00 = diverging)  ETA = local extrap if current decay holds
+----------------------------------------------------------------------
+[   100] |duv|=3.842e+00  |div|=1.085e-03  t=  14.6s  ps_avg=91.6
+[   200] |duv|=1.917e+00  |div|=3.221e-04  t=  23.1s  decay=2.00x/100it  ETA=1087it (2.1min)  ps_avg=70.3/dn
+[   300] |duv|=1.226e+00  |div|=2.061e-04  t=  32.1s  decay=1.56x/100it  ETA=1591it (2.8min) (up)  ps_avg=64.4/dn
+[   400] |duv|=9.552e-01  |div|=1.136e-04  t=  42.0s  decay=1.28x/100it  ETA=2753it (4.8min) (up)  ps_avg=62.7/dn
+[   500] |duv|=7.726e-01  |div|=9.081e-05  t=  52.6s  decay=1.24x/100it  ETA=3134it (5.5min)  ps_avg=62.9/=
+[   600] |duv|=6.548e-01  |div|=7.371e-05  t=  63.8s  decay=1.18x/100it  ETA=3919it (6.9min) (up)  ps_avg=63.8/=
+[   700] |duv|=5.961e-01  |div|=5.821e-05  t=  75.7s  decay=1.10x/100it  ETA=6799it (12.2min) (up)  ps_avg=64.9/=
+[   800] |duv|=5.431e-01  |div|=5.074e-05  t=  88.1s  decay=1.10x/100it  ETA=6765it (12.4min)  ps_avg=66.3/=
+[   900] |duv|=4.950e-01  |div|=4.392e-05  t= 101.2s  decay=1.10x/100it  ETA=6689it (12.5min)  ps_avg=67.8/up
+[  1000] |duv|=4.515e-01  |div|=4.164e-05  t= 114.8s  decay=1.10x/100it  ETA=6645it (12.7min)  ps_avg=69.4/up
+[  1100] |duv|=4.119e-01  |div|=3.900e-05  t= 129.0s  decay=1.10x/100it  ETA=6564it (12.8min)  ps_avg=71.0/up
+[  1200] |duv|=3.758e-01  |div|=3.545e-05  t= 143.5s  decay=1.10x/100it  ETA=6460it (12.9min)  ps_avg=72.5/up
+[  1300] |duv|=3.428e-01  |div|=3.471e-05  t= 158.5s  decay=1.10x/100it  ETA=6361it (12.9min)  ps_avg=74.1/up
+[  1400] |duv|=3.129e-01  |div|=3.256e-05  t= 173.9s  decay=1.10x/100it  ETA=6286it (13.0min)  ps_avg=75.6/up
+[  1500] |duv|=2.856e-01  |div|=3.225e-05  t= 189.6s  decay=1.10x/100it  ETA=6198it (13.1min)  ps_avg=77.0/=
+[  1600] |duv|=2.607e-01  |div|=3.041e-05  t= 205.5s  decay=1.10x/100it  ETA=6107it (13.1min)  ps_avg=78.4/=
+[  1700] |duv|=2.381e-01  |div|=2.952e-05  t= 221.7s  decay=1.10x/100it  ETA=6020it (13.1min)  ps_avg=79.7/=
+[  1800] |duv|=2.174e-01  |div|=2.851e-05  t= 237.9s  decay=1.09x/100it  ETA=5935it (13.1min)  ps_avg=80.8/=
+[  1900] |duv|=1.986e-01  |div|=2.778e-05  t= 254.1s  decay=1.09x/100it  ETA=5851it (13.0min)  ps_avg=81.8/=
+[  2000] |duv|=1.815e-01  |div|=2.682e-05  t= 270.0s  decay=1.09x/100it  ETA=5766it (13.0min)  ps_avg=82.5/=
+[  2100] |duv|=1.659e-01  |div|=2.624e-05  t= 285.4s  decay=1.09x/100it  ETA=5677it (12.9min)  ps_avg=83.1/=
+[  2200] |duv|=1.516e-01  |div|=2.580e-05  t= 300.0s  decay=1.09x/100it  ETA=5581it (12.7min)  ps_avg=83.4/=
+[  2300] |duv|=1.386e-01  |div|=2.393e-05  t= 313.7s  decay=1.09x/100it  ETA=5484it (12.5min)  ps_avg=83.3/=
+[  2400] |duv|=1.266e-01  |div|=2.231e-05  t= 326.1s  decay=1.09x/100it  ETA=5357it (12.1min)  ps_avg=82.9/=
+[  2500] |duv|=1.156e-01  |div|=2.193e-05  t= 337.8s  decay=1.09x/100it  ETA=5235it (11.8min)  ps_avg=82.3/=
+[  2600] |duv|=1.055e-01  |div|=2.105e-05  t= 348.3s  decay=1.10x/100it  ETA=5073it (11.3min)  ps_avg=81.5/=
+[  2700] |duv|=9.612e-02  |div|=1.845e-05  t= 358.7s  decay=1.10x/100it  ETA=4918it (10.9min)  ps_avg=80.7/=
+[  2800] |duv|=8.744e-02  |div|=1.611e-05  t= 369.0s  decay=1.10x/100it  ETA=4724it (10.4min)  ps_avg=80.0/=
+[  2900] |duv|=7.938e-02  |div|=1.402e-05  t= 379.4s  decay=1.10x/100it  ETA=4521it (9.9min)  ps_avg=79.3/=
+[  3000] |duv|=7.188e-02  |div|=1.237e-05  t= 389.7s  decay=1.10x/100it  ETA=4305it (9.3min)  ps_avg=78.6/=
+[  3100] |duv|=6.488e-02  |div|=1.066e-05  t= 399.8s  decay=1.11x/100it  ETA=4074it (8.8min)  ps_avg=78.0/=
+[  3200] |duv|=5.836e-02  |div|=9.338e-06  t= 409.8s  decay=1.11x/100it  ETA=3840it (8.2min)  ps_avg=77.4/=
+[  3300] |duv|=5.229e-02  |div|=7.989e-06  t= 419.7s  decay=1.12x/100it  ETA=3607it (7.6min)  ps_avg=76.8/=
+[  3400] |duv|=4.668e-02  |div|=6.802e-06  t= 429.5s  decay=1.12x/100it  ETA=3383it (7.1min)  ps_avg=76.3/=
+[  3500] |duv|=4.149e-02  |div|=5.958e-06  t= 439.4s  decay=1.13x/100it  ETA=3159it (6.6min)  ps_avg=75.7/=
+[  3600] |duv|=3.671e-02  |div|=5.245e-06  t= 449.2s  decay=1.13x/100it  ETA=2943it (6.1min)  ps_avg=75.2/=
+[  3700] |duv|=3.233e-02  |div|=4.540e-06  t= 458.9s  decay=1.14x/100it  ETA=2735it (5.7min)  ps_avg=74.7/=
+[  3800] |duv|=2.834e-02  |div|=3.906e-06  t= 468.6s  decay=1.14x/100it  ETA=2545it (5.2min)  ps_avg=74.3/=
+[  3900] |duv|=2.474e-02  |div|=3.359e-06  t= 478.2s  decay=1.15x/100it  ETA=2357it (4.8min)  ps_avg=73.8/=
+[  4000] |duv|=2.148e-02  |div|=2.857e-06  t= 487.7s  decay=1.15x/100it  ETA=2171it (4.4min)  ps_avg=73.4/=
+[  4100] |duv|=1.857e-02  |div|=2.623e-06  t= 497.2s  decay=1.16x/100it  ETA=2009it (4.1min)  ps_avg=72.9/=
+[  4200] |duv|=1.597e-02  |div|=2.307e-06  t= 506.5s  decay=1.16x/100it  ETA=1837it (3.7min)  ps_avg=72.5/=
+[  4300] |duv|=1.368e-02  |div|=2.020e-06  t= 516.0s  decay=1.17x/100it  ETA=1686it (3.4min)  ps_avg=72.1/=
+[  4400] |duv|=1.164e-02  |div|=1.850e-06  t= 525.3s  decay=1.17x/100it  ETA=1527it (3.0min)  ps_avg=71.7/=
+[  4500] |duv|=9.877e-03  |div|=1.602e-06  t= 534.5s  decay=1.18x/100it  ETA=1391it (2.8min)  ps_avg=71.3/=
+[  4600] |duv|=8.329e-03  |div|=1.380e-06  t= 543.7s  decay=1.19x/100it  ETA=1244it (2.5min)  ps_avg=70.9/=
+[  4700] |duv|=6.989e-03  |div|=1.229e-06  t= 552.9s  decay=1.19x/100it  ETA=1108it (2.2min)  ps_avg=70.6/=
+[  4800] |duv|=5.837e-03  |div|=1.058e-06  t= 561.9s  decay=1.20x/100it  ETA=979it (1.9min)  ps_avg=70.2/=
+[  4900] |duv|=4.846e-03  |div|=8.975e-07  t= 570.9s  decay=1.20x/100it  ETA=848it (1.6min) (down)  ps_avg=69.9/=
+[  5000] |duv|=4.001e-03  |div|=7.569e-07  t= 580.0s  decay=1.21x/100it  ETA=724it (1.4min) (down)  ps_avg=69.5/=
+[  5100] |duv|=3.287e-03  |div|=6.648e-07  t= 589.0s  decay=1.22x/100it  ETA=605it (1.2min) (down)  ps_avg=69.2/=
+[  5200] |duv|=2.683e-03  |div|=5.542e-07  t= 597.8s  decay=1.23x/100it  ETA=486it (56s) (down)  ps_avg=68.9/=
+[  5300] |duv|=2.175e-03  |div|=4.593e-07  t= 606.7s  decay=1.23x/100it  ETA=370it (42s) (down)  ps_avg=68.5/=
+[  5400] |duv|=1.754e-03  |div|=3.955e-07  t= 615.4s  decay=1.24x/100it  ETA=261it (30s) (down)  ps_avg=68.2/=
+[  5500] |duv|=1.404e-03  |div|=3.235e-07  t= 624.1s  decay=1.25x/100it  ETA=152it (17s) (down)  ps_avg=67.9/=
+[  5600] |duv|=1.114e-03  |div|=2.629e-07  t= 632.8s  decay=1.26x/100it  ETA=47it (5s) (down)  ps_avg=67.6/=
+
+Converged at iter 5646, |duv_rel| = 9.990e-04
+
+WARNING: SOR hit PS_MAX_ITER=300 in 1/5646 outer iter (0.0%). Pressure may be under-solved — increase PS_MAX_ITER.
+----------------------------------------------------------------------
+Time: 636.77s
+Error U: L2=2.6604e-03  Linf=5.4765e-03
+Error V: L2=8.4408e-04  Linf=2.6325e-03
+Mass divergence: 2.4865e-07
+
+-----------------------------------------------------
+
+  iterations: 5646
+        time: 6.3677e+02
+    err_u_l2: 2.6604e-03
+   err_u_inf: 5.4765e-03
+    err_v_l2: 8.4408e-04
+   err_v_inf: 2.6325e-03
+        mass: 2.4865e-07
+  ps_cap_hits: 1
+   converged: True
+     outcome: converged
+
+# Finished: 2026-10-29T16:13:31.435278  (elapsed 636.8 s)

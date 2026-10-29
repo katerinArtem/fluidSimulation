@@ -1,0 +1,34 @@
+# Log: c:\Users\playd\Desktop\magistr_curs\sim_old\fluidSimulation\logs\ns_v1_s_k_32_att_8.txt
+# Started: 2026-10-29T16:02:22.911061
+# version=v1 solver=s case=k NX=32 NY=32 attempt=8
+#--------------------------------------------------------------------
+SIMPLE scalar solver | NX=32 NY=32 | RE=40.0
+hx=0.04688 hy=0.03125 DT=7.812e-03 LAMBDA=-0.963741
+----------------------------------------------------------------------
+cols: |duv| resid  |div| mass-div  ps_avg(SOR iters, trend)  decay=xN per 100it (≈1.00 = stalled, <1.00 = diverging)  ETA = local extrap if current decay holds
+----------------------------------------------------------------------
+[   100] |duv|=2.358e-01  |div|=1.091e-04  t=   0.8s  ps_avg=73.0
+[   200] |duv|=4.978e-02  |div|=5.570e-05  t=   1.6s  decay=4.74x/100it  ETA=251it (2s)  ps_avg=75.1/up
+[   300] |duv|=5.892e-03  |div|=8.686e-06  t=   2.3s  decay=8.45x/100it  ETA=83it (1s) (down)  ps_avg=73.5/dn
+
+Converged at iter 365, |duv_rel| = 9.921e-04
+----------------------------------------------------------------------
+Time: 2.75s
+Error U: L2=9.8620e-03  Linf=2.1357e-02
+Error V: L2=3.0932e-03  Linf=8.7450e-03
+Mass divergence: 1.6354e-06
+
+-----------------------------------------------------
+
+  iterations: 365
+        time: 2.7527e+00
+    err_u_l2: 9.8620e-03
+   err_u_inf: 2.1357e-02
+    err_v_l2: 3.0932e-03
+   err_v_inf: 8.7450e-03
+        mass: 1.6354e-06
+  ps_cap_hits: 0
+   converged: True
+     outcome: converged
+
+# Finished: 2026-10-29T16:02:25.665392  (elapsed 2.8 s)

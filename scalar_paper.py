@@ -489,18 +489,23 @@ def solve():
     v_old  = [row[:] for row in V]
     u_star = [row[:] for row in U]
     v_star = [row[:] for row in V]
-    u_corr = [row[:] for row in U]
-    v_corr = [row[:] for row in V]
 
     t_start = time.time()
 
     logger.log(f"SIMPLE scalar solver | NX={NX} NY={NY} | RE={RE}")
     logger.log(f"hx={HX:.5f} hy={HY:.5f} DT={DT:.3e} LAMBDA={LAMBDA:.6f}")
     logger.log("-" * 70)
+    logger.log("cols: |duv| resid  |div| mass-div  ps_avg(SOR iters, trend)  "
+               "decay=xN per 100it (≈1.00 = stalled, <1.00 = diverging)  "
+               "ETA = local extrap if current decay holds")
+    logger.log("-" * 70)
 
     it = 0
     resid = float('inf')
     ps_iters_accum = 0
+    ps_cap_hits = 0                    # сколько раз SOR упёрся в PS_MAX_ITER
+    print_history = []                 # (it, duv, ps_avg)
+    eta_prev = None
 
     alpha_u = ALPHA_U
     one_m_alpha_u = 1.0 - alpha_u
@@ -526,6 +531,8 @@ def solve():
         p_prime, ps_iter_used = solve_pressure_correction(u_star, v_star, DT)
         ps_iters_accum += ps_iter_used
         avg_ps = ps_iters_accum / it
+        if ps_iter_used >= PS_MAX_ITER:
+            ps_cap_hits += 1
         
         # 3+4+5. Velocity correction + relaxation + pressure update (fused)
         for j in range(NY):
@@ -564,7 +571,64 @@ def solve():
         if it % PRINT_EVERY == 0:
             mass = residual_mass(U, V)
             elapsed = time.time() - t_start
-            logger.log(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s ps_avg={avg_ps:.1f}")
+            ms_per_it = 1000.0 * elapsed / it
+
+            extras = []
+            if print_history:
+                it_p, duv_p, ps_p = print_history[-1]
+                d_it = it - it_p
+
+                # ---- скорость сходимости ----
+                if duv_p > 0 and resid > 0 and d_it > 0:
+                    decay = (duv_p / resid) ** (100.0 / d_it)
+                    if decay < 1.0:
+                        extras.append(f"decay={decay:.2f}x/100it !!DIVERGING")
+                    elif decay < 1.0005:
+                        extras.append(f"decay={decay:.2f}x/100it STALLED")
+                    else:
+                        extras.append(f"decay={decay:.2f}x/100it")
+
+                        # ---- ETA (локальная экстраполяция) ----
+                        n_rem = 100.0 * math.log(resid / STEADY_TOL_REL) / math.log(decay)
+                        if 0 < n_rem < 1e8:
+                            eta_sec = n_rem * ms_per_it / 1000.0
+                            if eta_sec < 60.0:
+                                eta_s = f"{eta_sec:.0f}s"
+                            elif eta_sec < 3600.0:
+                                eta_s = f"{eta_sec / 60.0:.1f}min"
+                            else:
+                                eta_s = f"{eta_sec / 3600.0:.1f}h"
+                            if eta_prev is not None and eta_prev > 0:
+                                if n_rem > eta_prev * 1.15:
+                                    tag = " (up)"     # замедляемся
+                                elif n_rem < eta_prev * 0.87:
+                                    tag = " (down)"   # ускоряемся
+                                else:
+                                    tag = ""          # стабильно → оценке можно верить
+                                extras.append(f"ETA={n_rem:.0f}it ({eta_s}){tag}")
+                            else:
+                                extras.append(f"ETA={n_rem:.0f}it ({eta_s})")
+                            eta_prev = n_rem
+
+                # ---- тренд ps_avg ----
+                if ps_p > 0:
+                    d_ps = avg_ps - ps_p
+                    if d_ps > 1.5:
+                        extras.append(f"ps_avg={avg_ps:.1f}/up")
+                    elif d_ps < -1.5:
+                        extras.append(f"ps_avg={avg_ps:.1f}/dn")
+                    else:
+                        extras.append(f"ps_avg={avg_ps:.1f}/=")
+                else:
+                    extras.append(f"ps_avg={avg_ps:.1f}")
+            else:
+                extras.append(f"ps_avg={avg_ps:.1f}")
+
+
+            extra_str = ("  " + "  ".join(extras)) if extras else ""
+
+            logger.log(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s{extra_str}")
+            print_history.append((it, resid, avg_ps))
 
         if resid < STEADY_TOL_REL:
             logger.log(f"\nConverged at iter {it}, |duv_rel| = {resid:.3e}")
@@ -573,6 +637,11 @@ def solve():
         logger.log(f"\nWARNING: no convergence in {MAX_ITER} iter (resid={resid:.3e})")
 
     elapsed = time.time() - t_start
+
+    if ps_cap_hits > 0:
+        logger.log(f"\nWARNING: SOR hit PS_MAX_ITER={PS_MAX_ITER} in "
+                   f"{ps_cap_hits}/{it} outer iter ({100.0*ps_cap_hits/it:.1f}%). "
+                   f"Pressure may be under-solved — increase PS_MAX_ITER.")
 
     err_u_l2, err_u_inf = compute_errors_u()
     err_v_l2, err_v_inf = compute_errors_v()
@@ -590,6 +659,7 @@ def solve():
         'err_u_l2':   err_u_l2, 'err_u_inf': err_u_inf,
         'err_v_l2':   err_v_l2, 'err_v_inf': err_v_inf,
         'mass':       err_mass,
+        'ps_cap_hits': ps_cap_hits,
         'converged':  resid < STEADY_TOL_REL,
         'outcome':    'converged' if resid < STEADY_TOL_REL
                       else ('wall_time' if MAX_WALL_TIME > 0
