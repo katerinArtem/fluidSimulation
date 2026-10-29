@@ -23,6 +23,10 @@ import time
 from paper_config import *                                # noqa: F401,F403
 from kovasznay import u_exact, v_exact, LAMBDA
 
+from run_logger import RunLogger
+
+
+
 # =============================================================================
 # Grid coordinates (MAC staggering)
 # =============================================================================
@@ -69,7 +73,7 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
     inv_hy2 = inv_hy * inv_hy
     inv_rho = 1.0 / RHO
 
-    WALL_COEF = 1 # 4.0 / 3.0
+    WALL_COEF = 4.0 / 3.0
 
     # ---------- U momentum (i = 1..NX-1) ----------
     for j in range(NY):
@@ -170,13 +174,23 @@ def solve_pressure_correction(u_star, v_star, dt):
     rhs_scale = RHO / dt
 
     # Pre-compute divergence of u* once
+    rhs_norm = 0.0
     div = [[0.0] * NX for _ in range(NY)]
     for j in range(NY):
         for i in range(NX):
             div[j][i] = ((u_star[j][i+1] - u_star[j][i]) * inv_hx +
                          (v_star[j+1][i] - v_star[j][i]) * inv_hy)
+            
+            val = abs(rhs_scale * div[j][i])
+            if val > rhs_norm: rhs_norm = val
+
+            
+    
+    if rhs_norm == 0.0: rhs_norm = 1.0
+    ps_tol_abs = PS_TOL_REL * rhs_norm
 
     p_prime = [[0.0] * NX for _ in range(NY)]
+
 
     for _ in range(PS_MAX_ITER):
         max_diff = 0.0
@@ -195,7 +209,7 @@ def solve_pressure_correction(u_star, v_star, dt):
                 if d > max_diff:
                     max_diff = d
                 pj[i] = p_new
-        if max_diff < PS_TOL:
+        if max_diff < ps_tol_abs:
             break
 
     # Remove arbitrary constant (pure-Neumann problem)
@@ -235,16 +249,23 @@ def correct_velocity(u_star, v_star, p_prime, dt, u_corr, v_corr):
 # =============================================================================
 
 def residual_uv(u_old, v_old, u_new, v_new):
-    m = 0.0
+    """Относительная max-невязка приращения: max|Δu|/max|u|."""
+    m, n = 0.0, 0.0
     for j in range(NY):
         for i in range(1, NX):
             d = abs(u_new[j][i] - u_old[j][i])
             if d > m: m = d
+            a = abs(u_new[j][i])
+            if a > n: n = a
     for j in range(1, NY):
         for i in range(NX):
             d = abs(v_new[j][i] - v_old[j][i])
             if d > m: m = d
-    return m
+            a = abs(v_new[j][i])
+            if a > n: n = a
+    if n == 0.0:
+        return m
+    return m / (n * DT)    
 
 def residual_mass(u, v):
     inv_hx = 1.0 / HX
@@ -284,7 +305,19 @@ def compute_errors_v():
 # Main solver loop
 # =============================================================================
 
+import os
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
 def solve():
+    logger = RunLogger(
+        base_dir = BASE,
+        version  = "v1",
+        solver   = "s",          # 's' = scalar, 'v' = vectorized
+        case     = "k",          # 'k' = Kovasznay
+        nx       = NX,
+        ny       = NY,
+    )
+
     apply_bcs(U, V)
 
     u_old  = [row[:] for row in U]
@@ -296,14 +329,17 @@ def solve():
 
     t_start = time.time()
 
-    print(f"SIMPLE scalar solver | NX={NX} NY={NY} | RE={RE}")
-    print(f"hx={HX:.5f} hy={HY:.5f} DT={DT:.3e} LAMBDA={LAMBDA:.6f}")
-    print("-" * 70)
+    logger.log(f"SIMPLE scalar solver | NX={NX} NY={NY} | RE={RE}")
+    logger.log(f"hx={HX:.5f} hy={HY:.5f} DT={DT:.3e} LAMBDA={LAMBDA:.6f}")
+    logger.log("-" * 70)
 
     it = 0
     resid = float('inf')
 
     for it in range(1, MAX_ITER + 1):
+        if MAX_WALL_TIME > 0 and (time.time() - t_start) > MAX_WALL_TIME:
+            logger.log(f"\nWall-time limit reached at iter {it}")
+            break
         # Save previous state
         for j in range(NY):
             u_old[j][:] = U[j]
@@ -339,13 +375,13 @@ def solve():
         if it % PRINT_EVERY == 0:
             mass = residual_mass(U, V)
             elapsed = time.time() - t_start
-            print(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s")
+            logger.log(f"[{it:6d}] |duv|={resid:.3e}  |div|={mass:.3e}  t={elapsed:6.1f}s")
 
-        if resid < STEADY_TOL:
-            print(f"\nConverged at iter {it}, |duv| = {resid:.3e}")
+        if resid < STEADY_TOL_REL:
+            logger.log(f"\nConverged at iter {it}, |duv_rel| = {resid:.3e}")
             break
     else:
-        print(f"\nWARNING: no convergence in {MAX_ITER} iter (resid={resid:.3e})")
+        logger.log(f"\nWARNING: no convergence in {MAX_ITER} iter (resid={resid:.3e})")
 
     elapsed = time.time() - t_start
 
@@ -353,19 +389,35 @@ def solve():
     err_v_l2, err_v_inf = compute_errors_v()
     err_mass = residual_mass(U, V)
 
-    print("-" * 70)
-    print(f"Time: {elapsed:.2f}s")
-    print(f"Error U: L2={err_u_l2:.4e}  Linf={err_u_inf:.4e}")
-    print(f"Error V: L2={err_v_l2:.4e}  Linf={err_v_inf:.4e}")
-    print(f"Mass divergence: {err_mass:.4e}")
+    logger.log("-" * 70)
+    logger.log(f"Time: {elapsed:.2f}s")
+    logger.log(f"Error U: L2={err_u_l2:.4e}  Linf={err_u_inf:.4e}")
+    logger.log(f"Error V: L2={err_v_l2:.4e}  Linf={err_v_inf:.4e}")
+    logger.log(f"Mass divergence: {err_mass:.4e}")
 
-    return {
+    logger.log(f"\n-----------------------------------------------------\n")
+
+    summary = {
         'iterations': it,
         'time':       elapsed,
         'err_u_l2':   err_u_l2, 'err_u_inf': err_u_inf,
         'err_v_l2':   err_v_l2, 'err_v_inf': err_v_inf,
         'mass':       err_mass,
+        'converged':  resid < STEADY_TOL_REL,
+        'outcome':    'converged' if resid < STEADY_TOL_REL
+                      else ('wall_time' if MAX_WALL_TIME > 0
+                            and elapsed >= MAX_WALL_TIME
+                            else 'max_iter'),
     }
+
+    for key, value in summary.items():
+        if isinstance(value, float):
+            logger.log(f"  {key:>10}: {value:.4e}")
+        else:
+            logger.log(f"  {key:>10}: {value}")
+
+    logger.close()
+    return summary
 
 if __name__ == "__main__":
     solve()
