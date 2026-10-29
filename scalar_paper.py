@@ -16,7 +16,7 @@ BCs: Dirichlet from exact Kovasznay solution on all walls.
 Parameters : paper_config.py
 Exact sol. : kovasznay_exact.py
 """
-
+import os
 import math
 import time
 
@@ -51,16 +51,28 @@ V = [[0.0] * NX       for _ in range(NY + 1)]   # (NY+1) x (NX)
 P = [[0.0] * NX       for _ in range(NY)]       # (NY)   x (NX)
 
 # =============================================================================
-# Boundary conditions (Dirichlet from exact solution)
+# Boundary conditions (Dirichlet from exact solution), precomputed ONCE (coordinates are fixed)
 # =============================================================================
+# U-момент: wall-diffusion использует u_exact(x_u(i), Y_MIN/MAX)
+_U_SOUTH = [u_exact(x_u(i), Y_MIN) for i in range(NX + 1)]
+_U_NORTH = [u_exact(x_u(i), Y_MAX) for i in range(NX + 1)]
+# apply_bcs для U
+_U_WEST_BC = [u_exact(X_MIN, y_u(j)) for j in range(NY)]
+_U_EAST_BC = [u_exact(X_MAX, y_u(j)) for j in range(NY)]
+# V-момент: wall-diffusion / flux на i=0, i=NX-1
+_V_WEST_MOM = [v_exact(X_MIN, y_v(j)) for j in range(NY + 1)]
+_V_EAST_MOM = [v_exact(X_MAX, y_v(j)) for j in range(NY + 1)]
+# apply_bcs для V
+_V_SOUTH_BC = [v_exact(x_v(i), Y_MIN) for i in range(NX)]
+_V_NORTH_BC = [v_exact(x_v(i), Y_MAX) for i in range(NX)]
 
 def apply_bcs(u, v):
     for j in range(NY):
-        u[j][0]  = u_exact(X_MIN, y_u(j))
-        u[j][NX] = u_exact(X_MAX, y_u(j))
+        u[j][0]  = _U_WEST_BC[j]
+        u[j][NX] = _U_EAST_BC[j]
     for i in range(NX):
-        v[0][i]  = v_exact(x_v(i), Y_MIN)
-        v[NY][i] = v_exact(x_v(i), Y_MAX)
+        v[0][i]  = _V_SOUTH_BC[i]
+        v[NY][i] = _V_NORTH_BC[i]
 
 # =============================================================================
 # Momentum predictor — FVM, upwind convection, central diffusion
@@ -72,88 +84,143 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
     inv_hx2 = inv_hx * inv_hx
     inv_hy2 = inv_hy * inv_hy
     inv_rho = 1.0 / RHO
-
+    nu      = NU
     WALL_COEF = 4.0 / 3.0
 
     # ---------- U momentum (i = 1..NX-1) ----------
-    for j in range(NY):
+    # Row j = 0  (south wall, no j==0 branch inside)
+    j = 0
+    uj     = u[0]
+    ujp    = u[1]
+    usj    = u_star[0]
+    pj     = p[0]
+    vjp    = v[1]
+    for i in range(1, NX):
+        u_w = 0.5 * (uj[i-1] + uj[i])
+        u_e = 0.5 * (uj[i]   + uj[i+1])
+        v_n = 0.5 * (vjp[i-1] + vjp[i])
+        fw = u_w * (uj[i-1] if u_w > 0.0 else uj[i])
+        fe = u_e * (uj[i]   if u_e > 0.0 else uj[i+1])
+        # fs = 0 (j == 0)
+        fn = v_n * (uj[i]   if v_n > 0.0 else ujp[i])
+        conv = -((fe - fw) * inv_hx + fn * inv_hy)
+        pres = -(pj[i] - pj[i-1]) * inv_rho * inv_hx
+        diff_x = (uj[i-1] - 2.0*uj[i] + uj[i+1]) * inv_hx2
+        u_wall = _U_SOUTH[i]
+        diff_y = WALL_COEF * (2.0*u_wall - 3.0*uj[i] + ujp[i]) * inv_hy2
+        usj[i] = uj[i] + dt * (conv + pres + nu * (diff_x + diff_y))
+    usj[0]  = uj[0]
+    usj[NX] = uj[NX]
+
+    # Interior rows j = 1..NY-2
+    for j in range(1, NY - 1):
+        uj     = u[j]
+        ujm    = u[j - 1]
+        ujp    = u[j + 1]
+        usj    = u_star[j]
+        pj     = p[j]
+        vj     = v[j]
+        vjp    = v[j + 1]
         for i in range(1, NX):
-            # face velocities
-            u_w = 0.5 * (u[j][i-1] + u[j][i])
-            u_e = 0.5 * (u[j][i]   + u[j][i+1])
-            v_s = 0.5 * (v[j][i-1]   + v[j][i])
-            v_n = 0.5 * (v[j+1][i-1] + v[j+1][i])
-
-            # upwind fluxes
-            fw = u_w * (u[j][i-1] if u_w > 0.0 else u[j][i])
-            fe = u_e * (u[j][i]   if u_e > 0.0 else u[j][i+1])
-
-            if j == 0:
-                fs = 0.0                                     # v = 0 at bottom
-            else:
-                fs = v_s * (u[j-1][i] if v_s > 0.0 else u[j][i])
-
-            if j == NY - 1:
-                fn = 0.0                                     # v = 0 at top
-            else:
-                fn = v_n * (u[j][i] if v_n > 0.0 else u[j+1][i])
-
+            u_w = 0.5 * (uj[i-1] + uj[i])
+            u_e = 0.5 * (uj[i]   + uj[i+1])
+            v_s = 0.5 * (vj[i-1]  + vj[i])
+            v_n = 0.5 * (vjp[i-1] + vjp[i])
+            fw = u_w * (uj[i-1] if u_w > 0.0 else uj[i])
+            fe = u_e * (uj[i]   if u_e > 0.0 else uj[i+1])
+            fs = v_s * (ujm[i]  if v_s > 0.0 else uj[i])
+            fn = v_n * (uj[i]   if v_n > 0.0 else ujp[i])
             conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy)
+            pres = -(pj[i] - pj[i-1]) * inv_rho * inv_hx
+            diff_x = (uj[i-1] - 2.0*uj[i] + uj[i+1]) * inv_hx2
+            diff_y = (ujm[i]  - 2.0*uj[i] + ujp[i]) * inv_hy2
+            usj[i] = uj[i] + dt * (conv + pres + nu * (diff_x + diff_y))
+        usj[0]  = uj[0]
+        usj[NX] = uj[NX]
 
-            pres = -(p[j][i] - p[j][i-1]) * inv_rho * inv_hx
+    # Row j = NY-1  (north wall, no j==NY-1 branch inside)
+    j = NY - 1
+    uj     = u[j]
+    ujm    = u[j - 1]
+    usj    = u_star[j]
+    pj     = p[j]
+    vj     = v[j]
+    for i in range(1, NX):
+        u_w = 0.5 * (uj[i-1] + uj[i])
+        u_e = 0.5 * (uj[i]   + uj[i+1])
+        v_s = 0.5 * (vj[i-1] + vj[i])
+        fw = u_w * (uj[i-1] if u_w > 0.0 else uj[i])
+        fe = u_e * (uj[i]   if u_e > 0.0 else uj[i+1])
+        fs = v_s * (ujm[i]  if v_s > 0.0 else uj[i])
+        # fn = 0 (j == NY-1)
+        conv = -((fe - fw) * inv_hx - fs * inv_hy)
+        pres = -(pj[i] - pj[i-1]) * inv_rho * inv_hx
+        diff_x = (uj[i-1] - 2.0*uj[i] + uj[i+1]) * inv_hx2
+        u_wall = _U_NORTH[i]
+        diff_y = WALL_COEF * (2.0*u_wall - 3.0*uj[i] + ujm[i]) * inv_hy2
+        usj[i] = uj[i] + dt * (conv + pres + nu * (diff_x + diff_y))
+    usj[0]  = uj[0]
+    usj[NX] = uj[NX]
 
-            diff_x = (u[j][i-1] - 2.0*u[j][i] + u[j][i+1]) * inv_hx2
-            
-            if j == 0:
-                u_wall = u_exact(x_u(i), Y_MIN)
-                diff_y = WALL_COEF * (2.0*u_wall - 3.0*u[j][i] + u[j+1][i]) * inv_hy2
-            elif j == NY - 1:
-                u_wall = u_exact(x_u(i), Y_MAX)
-                diff_y = WALL_COEF * (2.0*u_wall - 3.0*u[j][i] + u[j-1][i]) * inv_hy2
-            else:
-                diff_y = (u[j-1][i] - 2.0*u[j][i] + u[j+1][i]) * inv_hy2
-
-            u_star[j][i] = u[j][i] + dt * (conv + pres + NU * (diff_x + diff_y))
-
-        u_star[j][0]  = u[j][0]
-        u_star[j][NX] = u[j][NX]
-
-    # ---------- V momentum (j = 1..NY-1) ----------
+    # ---------- V momentum (j = 1..NY-1, i=0 / interior / i=NX-1) ----------
     for j in range(1, NY):
-        for i in range(NX):
-            u_w = 0.5 * (u[j-1][i]   + u[j][i])
-            u_e = 0.5 * (u[j-1][i+1] + u[j][i+1])
-            v_s = 0.5 * (v[j-1][i] + v[j][i])
-            v_n = 0.5 * (v[j][i]   + v[j+1][i])
+        vj     = v[j]
+        vjm    = v[j - 1]
+        vjp    = v[j + 1]
+        vsj    = v_star[j]
+        uj     = u[j]
+        ujm    = u[j - 1]
+        pj     = p[j]
+        pjm    = p[j - 1]
 
-            if i == 0:
-                fw = u_w * v_exact(X_MIN, y_v(j))
-            else:
-                fw = u_w * (v[j][i-1] if u_w > 0.0 else v[j][i])
+        # i = 0
+        u_w = 0.5 * (ujm[0] + uj[0])
+        u_e = 0.5 * (ujm[1] + uj[1])
+        v_s = 0.5 * (vjm[0] + vj[0])
+        v_n = 0.5 * (vj[0]  + vjp[0])
+        fw  = u_w * _V_WEST_MOM[j]
+        fe  = u_e * (vj[0] if u_e > 0.0 else vj[1])
+        fs  = v_s * (vjm[0] if v_s > 0.0 else vj[0])
+        fn  = v_n * (vj[0]  if v_n > 0.0 else vjp[0])
+        conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy)
+        pres = -(pj[0] - pjm[0]) * inv_rho * inv_hy
+        diff_y = (vjm[0] - 2.0*vj[0] + vjp[0]) * inv_hy2
+        v_wall = _V_WEST_MOM[j]
+        diff_x = WALL_COEF * (2.0*v_wall - 3.0*vj[0] + vj[1]) * inv_hx2
+        vsj[0] = vj[0] + dt * (conv + pres + nu * (diff_x + diff_y))
 
-            if i == NX - 1:
-                fe = u_e * v_exact(X_MAX, y_v(j))
-            else:
-                fe = u_e * (v[j][i] if u_e > 0.0 else v[j][i+1])
-
-            fs = v_s * (v[j-1][i] if v_s > 0.0 else v[j][i])
-            fn = v_n * (v[j][i]   if v_n > 0.0 else v[j+1][i])
-
+        # interior i = 1..NX-2
+        for i in range(1, NX - 1):
+            u_w = 0.5 * (ujm[i]   + uj[i])
+            u_e = 0.5 * (ujm[i+1] + uj[i+1])
+            v_s = 0.5 * (vjm[i]   + vj[i])
+            v_n = 0.5 * (vj[i]    + vjp[i])
+            fw = u_w * (vj[i-1] if u_w > 0.0 else vj[i])
+            fe = u_e * (vj[i]   if u_e > 0.0 else vj[i+1])
+            fs = v_s * (vjm[i]  if v_s > 0.0 else vj[i])
+            fn = v_n * (vj[i]   if v_n > 0.0 else vjp[i])
             conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy)
+            pres = -(pj[i] - pjm[i]) * inv_rho * inv_hy
+            diff_x = (vj[i-1] - 2.0*vj[i] + vj[i+1]) * inv_hx2
+            diff_y = (vjm[i]  - 2.0*vj[i] + vjp[i]) * inv_hy2
+            vsj[i] = vj[i] + dt * (conv + pres + nu * (diff_x + diff_y))
 
-            pres = -(p[j][i] - p[j-1][i]) * inv_rho * inv_hy
-
-            diff_y = (v[j-1][i] - 2.0*v[j][i] + v[j+1][i]) * inv_hy2
-            if i == 0:
-                v_wall = v_exact(X_MIN, y_v(j))
-                diff_x = WALL_COEF * (2.0*v_wall - 3.0*v[j][i] + v[j][i+1]) * inv_hx2
-            elif i == NX - 1:
-                v_wall = v_exact(X_MAX, y_v(j))
-                diff_x = WALL_COEF * (2.0*v_wall - 3.0*v[j][i] + v[j][i-1]) * inv_hx2
-            else:
-                diff_x = (v[j][i-1] - 2.0*v[j][i] + v[j][i+1]) * inv_hx2
-
-            v_star[j][i] = v[j][i] + dt * (conv + pres + NU * (diff_x + diff_y))
+        # i = NX-1
+        i = NX - 1
+        u_w = 0.5 * (ujm[i] + uj[i])
+        u_e = 0.5 * (ujm[i+1] + uj[i+1])
+        v_s = 0.5 * (vjm[i] + vj[i])
+        v_n = 0.5 * (vj[i]  + vjp[i])
+        fw  = u_w * (vj[i-1] if u_w > 0.0 else vj[i])
+        fe  = u_e * _V_EAST_MOM[j]
+        fs  = v_s * (vjm[i]  if v_s > 0.0 else vj[i])
+        fn  = v_n * (vj[i]   if v_n > 0.0 else vjp[i])
+        conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy)
+        pres = -(pj[i] - pjm[i]) * inv_rho * inv_hy
+        diff_y = (vjm[i] - 2.0*vj[i] + vjp[i]) * inv_hy2
+        v_wall = _V_EAST_MOM[j]
+        diff_x = WALL_COEF * (2.0*v_wall - 3.0*vj[i] + vj[i-1]) * inv_hx2
+        vsj[i] = vj[i] + dt * (conv + pres + nu * (diff_x + diff_y))
 
     for i in range(NX):
         v_star[0][i]  = v[0][i]
@@ -171,54 +238,133 @@ def solve_pressure_correction(u_star, v_star, dt):
     inv_hx2 = inv_hx * inv_hx
     inv_hy2 = inv_hy * inv_hy
     denom   = 2.0 * (inv_hx2 + inv_hy2)
+    inv_den = 1.0 / denom
     rhs_scale = RHO / dt
 
-    # Pre-compute divergence of u* once
-    rhs_norm = 0.0
-    div = [[0.0] * NX for _ in range(NY)]
+    # ---- precompute rhs (= rhs_scale * inv_den * div) ----
+    rhs_scale_d = rhs_scale * inv_den
+    pre_rhs = [[0.0] * NX for _ in range(NY)]
+    max_div = 0.0
     for j in range(NY):
+        uj  = u_star[j]
+        vj  = v_star[j]
+        vjn = v_star[j + 1]
+        prj = pre_rhs[j]
         for i in range(NX):
-            div[j][i] = ((u_star[j][i+1] - u_star[j][i]) * inv_hx +
-                         (v_star[j+1][i] - v_star[j][i]) * inv_hy)
-            
-            val = abs(rhs_scale * div[j][i])
-            if val > rhs_norm: rhs_norm = val
+            d = (uj[i + 1] - uj[i]) * inv_hx + (vjn[i] - vj[i]) * inv_hy
+            prj[i] = rhs_scale_d * d
+            ad = d if d >= 0.0 else -d
+            if ad > max_div:
+                max_div = ad
 
-            
-    
-    if rhs_norm == 0.0: rhs_norm = 1.0
+    rhs_norm = max_div * rhs_scale
+    if rhs_norm == 0.0:
+        rhs_norm = 1.0
     ps_tol_abs = PS_TOL_REL * rhs_norm
 
     p_prime = [[0.0] * NX for _ in range(NY)]
 
-    ps_iter_used = PS_MAX_ITER  # по умолчанию — упёрлись в cap
+    hx2d = inv_hx2 * inv_den
+    hy2d = inv_hy2 * inv_den
+    r_int = range(1, NX - 1)
+
+    ps_iter_used = PS_MAX_ITER
     for k in range(PS_MAX_ITER):
         max_diff = 0.0
-        for j in range(NY):
-            pj = p_prime[j]
-            for i in range(NX):
-                p_e = pj[i+1] if i < NX - 1 else pj[i]
-                p_w = pj[i-1] if i > 0       else pj[i]
-                p_n = p_prime[j+1][i] if j < NY - 1 else pj[i]
-                p_s = p_prime[j-1][i] if j > 0       else pj[i]
 
-                p_gs = (inv_hx2 * (p_e + p_w) + inv_hy2 * (p_n + p_s)
-                        - rhs_scale * div[j][i]) / denom
-                p_new = pj[i] + PS_OMEGA * (p_gs - pj[i])
-                d = abs(p_new - pj[i])
-                if d > max_diff:
-                    max_diff = d
-                pj[i] = p_new
-                
-        if max_diff < ps_tol_abs:      # проверка ТОЛЬКО после полного прохода
+        # ---------- j = 0 (south wall: p_s = p_i) ----------
+        pj    = p_prime[0]
+        pjp   = p_prime[1]
+        rhsj  = pre_rhs[0]
+        # i = 0
+        pi = pj[0]
+        p_gs = hx2d * (pj[1] + pi) + hy2d * (pjp[0] + pi) - rhsj[0]
+        delta = PS_OMEGA * (p_gs - pi)
+        pj[0] = pi + delta
+        if delta < 0.0: delta = -delta
+        if delta > max_diff: max_diff = delta
+        # interior
+        for i in r_int:
+            pi = pj[i]
+            p_gs = hx2d * (pj[i-1] + pj[i+1]) + hy2d * (pjp[i] + pi) - rhsj[i]
+            delta = PS_OMEGA * (p_gs - pi)
+            pj[i] = pi + delta
+            if delta < 0.0: delta = -delta
+            if delta > max_diff: max_diff = delta
+        # i = NX-1
+        i = NX - 1
+        pi = pj[i]
+        p_gs = hx2d * (pj[i-1] + pi) + hy2d * (pjp[i] + pi) - rhsj[i]
+        delta = PS_OMEGA * (p_gs - pi)
+        pj[i] = pi + delta
+        if delta < 0.0: delta = -delta
+        if delta > max_diff: max_diff = delta
+
+        # ---------- interior rows ----------
+        for j in range(1, NY - 1):
+            pj   = p_prime[j]
+            pjm  = p_prime[j - 1]
+            pjp  = p_prime[j + 1]
+            rhsj = pre_rhs[j]
+            # i = 0
+            pi = pj[0]
+            p_gs = hx2d * (pi + pj[1]) + hy2d * (pjp[0] + pjm[0]) - rhsj[0]
+            delta = PS_OMEGA * (p_gs - pi)
+            pj[0] = pi + delta
+            if delta < 0.0: delta = -delta
+            if delta > max_diff: max_diff = delta
+            # interior
+            for i in r_int:
+                pi = pj[i]
+                p_gs = hx2d * (pj[i-1] + pj[i+1]) + hy2d * (pjp[i] + pjm[i]) - rhsj[i]
+                delta = PS_OMEGA * (p_gs - pi)
+                pj[i] = pi + delta
+                if delta < 0.0: delta = -delta
+                if delta > max_diff: max_diff = delta
+            # i = NX-1
+            i = NX - 1
+            pi = pj[i]
+            p_gs = hx2d * (pj[i-1] + pi) + hy2d * (pjp[i] + pjm[i]) - rhsj[i]
+            delta = PS_OMEGA * (p_gs - pi)
+            pj[i] = pi + delta
+            if delta < 0.0: delta = -delta
+            if delta > max_diff: max_diff = delta
+
+        # ---------- j = NY-1 (north wall: p_n = p_i) ----------
+        pj   = p_prime[NY - 1]
+        pjm  = p_prime[NY - 2]
+        rhsj = pre_rhs[NY - 1]
+        # i = 0
+        pi = pj[0]
+        p_gs = hx2d * (pi + pj[1]) + hy2d * (pi + pjm[0]) - rhsj[0]
+        delta = PS_OMEGA * (p_gs - pi)
+        pj[0] = pi + delta
+        if delta < 0.0: delta = -delta
+        if delta > max_diff: max_diff = delta
+        # interior
+        for i in r_int:
+            pi = pj[i]
+            p_gs = hx2d * (pj[i-1] + pj[i+1]) + hy2d * (pi + pjm[i]) - rhsj[i]
+            delta = PS_OMEGA * (p_gs - pi)
+            pj[i] = pi + delta
+            if delta < 0.0: delta = -delta
+            if delta > max_diff: max_diff = delta
+        # i = NX-1
+        i = NX - 1
+        pi = pj[i]
+        p_gs = hx2d * (pj[i-1] + pi) + hy2d * (pi + pjm[i]) - rhsj[i]
+        delta = PS_OMEGA * (p_gs - pi)
+        pj[i] = pi + delta
+        if delta < 0.0: delta = -delta
+        if delta > max_diff: max_diff = delta
+
+        if max_diff < ps_tol_abs:
             ps_iter_used = k + 1
             break
 
     # Remove arbitrary constant (pure-Neumann problem)
     p_ref = p_prime[0][0]
-    for j in range(NY):
-        for i in range(NX):
-            p_prime[j][i] -= p_ref
+    p_prime = [[x - p_ref for x in row] for row in p_prime]
 
     return p_prime, ps_iter_used
 
@@ -252,31 +398,44 @@ def correct_velocity(u_star, v_star, p_prime, dt, u_corr, v_corr):
 
 def residual_uv(u_old, v_old, u_new, v_new):
     """Относительная max-невязка приращения: max|Δu|/max|u|."""
-    m, n = 0.0, 0.0
+    m = 0.0
+    n = 0.0
     for j in range(NY):
+        uoldj = u_old[j]
+        unewj = u_new[j]
         for i in range(1, NX):
-            d = abs(u_new[j][i] - u_old[j][i])
-            if d > m: m = d
-            a = abs(u_new[j][i])
-            if a > n: n = a
+            un = unewj[i]
+            d = un - uoldj[i]
+            if d < 0.0: d = -d
+            if d > m:   m = d
+            if un < 0.0: un = -un
+            if un > n:   n = un
     for j in range(1, NY):
+        voldj = v_old[j]
+        vnewj = v_new[j]
         for i in range(NX):
-            d = abs(v_new[j][i] - v_old[j][i])
-            if d > m: m = d
-            a = abs(v_new[j][i])
-            if a > n: n = a
+            vn = vnewj[i]
+            d = vn - voldj[i]
+            if d < 0.0: d = -d
+            if d > m:   m = d
+            if vn < 0.0: vn = -vn
+            if vn > n:   n = vn
     if n == 0.0:
         return m
-    return m / (n * DT)    
+    return m / (n * DT) 
 
 def residual_mass(u, v):
     inv_hx = 1.0 / HX
     inv_hy = 1.0 / HY
     m = 0.0
     for j in range(NY):
+        uj  = u[j]
+        vj  = v[j]
+        vjn = v[j + 1]
         for i in range(NX):
-            d = (u[j][i+1] - u[j][i]) * inv_hx + (v[j+1][i] - v[j][i]) * inv_hy
-            if abs(d) > m: m = abs(d)
+            d = (uj[i + 1] - uj[i]) * inv_hx + (vjn[i] - vj[i]) * inv_hy
+            if d < 0.0: d = -d
+            if d > m:   m = d
     return m
 
 # =============================================================================
@@ -286,28 +445,32 @@ def residual_mass(u, v):
 def compute_errors_u():
     sumsq, max_err, n = 0.0, 0.0, 0
     for j in range(NY):
+        uj = U[j]
+        yy = y_u(j)
         for i in range(NX + 1):
-            e = U[j][i] - u_exact(x_u(i), y_u(j))
+            e = uj[i] - u_exact(x_u(i), yy)
             sumsq += e * e
-            if abs(e) > max_err: max_err = abs(e)
+            if e < 0.0: e = -e
+            if e > max_err: max_err = e
             n += 1
     return math.sqrt(sumsq / n), max_err
 
 def compute_errors_v():
     sumsq, max_err, n = 0.0, 0.0, 0
     for j in range(NY + 1):
+        vj = V[j]
+        yy = y_v(j)
         for i in range(NX):
-            e = V[j][i] - v_exact(x_v(i), y_v(j))
+            e = vj[i] - v_exact(x_v(i), yy)
             sumsq += e * e
-            if abs(e) > max_err: max_err = abs(e)
+            if e < 0.0: e = -e
+            if e > max_err: max_err = e
             n += 1
     return math.sqrt(sumsq / n), max_err
 
 # =============================================================================
 # Main solver loop
 # =============================================================================
-
-import os
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
 def solve():
@@ -337,8 +500,15 @@ def solve():
 
     it = 0
     resid = float('inf')
-
     ps_iters_accum = 0
+
+    alpha_u = ALPHA_U
+    one_m_alpha_u = 1.0 - alpha_u
+    alpha_p = ALPHA_P
+    inv_hx = 1.0 / HX
+    inv_hy = 1.0 / HY
+    coeff  = DT / RHO
+
     for it in range(1, MAX_ITER + 1):
         if MAX_WALL_TIME > 0 and (time.time() - t_start) > MAX_WALL_TIME:
             logger.log(f"\nWall-time limit reached at iter {it}")
@@ -354,29 +524,41 @@ def solve():
 
         # 2. Pressure Poisson
         p_prime, ps_iter_used = solve_pressure_correction(u_star, v_star, DT)
-
         ps_iters_accum += ps_iter_used
         avg_ps = ps_iters_accum / it
         
-
-        # 3. Velocity correction
-        correct_velocity(u_star, v_star, p_prime, DT, u_corr, v_corr)
-
-        # 4. Under-relaxation of velocity, update of pressure
+        # 3+4+5. Velocity correction + relaxation + pressure update (fused)
         for j in range(NY):
+            ppj  = p_prime[j]
+            Pj   = P[j]
+            usj  = u_star[j]
+            uoj  = u_old[j]
+            Uj   = U[j]
+            pp_prev = ppj[0]
+            Pj[0] += alpha_p * pp_prev
             for i in range(1, NX):
-                U[j][i] = ALPHA_U * u_corr[j][i] + (1.0 - ALPHA_U) * u_old[j][i]
-        for j in range(1, NY):
-            for i in range(NX):
-                V[j][i] = ALPHA_U * v_corr[j][i] + (1.0 - ALPHA_U) * v_old[j][i]
-        for j in range(NY):
-            for i in range(NX):
-                P[j][i] += ALPHA_P * p_prime[j][i]
+                pp  = ppj[i]
+                grad = (pp - pp_prev) * inv_hx
+                uc  = usj[i] - coeff * grad
+                Uj[i] = alpha_u * uc + one_m_alpha_u * uoj[i]
+                Pj[i] += alpha_p * pp
+                pp_prev = pp
 
-        # 5. Re-apply BCs
+        for j in range(1, NY):
+            ppj  = p_prime[j]
+            ppjm = p_prime[j - 1]
+            vsj  = v_star[j]
+            voj  = v_old[j]
+            Vj   = V[j]
+            for i in range(NX):
+                grad = (ppj[i] - ppjm[i]) * inv_hy
+                vc   = vsj[i] - coeff * grad
+                Vj[i] = alpha_u * vc + one_m_alpha_u * voj[i]
+
+        # 6. Re-apply BCs
         apply_bcs(U, V)
 
-        # 6. Convergence check
+        # 7. Convergence check
         resid = residual_uv(u_old, v_old, U, V)
 
         if it % PRINT_EVERY == 0:
@@ -401,9 +583,7 @@ def solve():
     logger.log(f"Error U: L2={err_u_l2:.4e}  Linf={err_u_inf:.4e}")
     logger.log(f"Error V: L2={err_v_l2:.4e}  Linf={err_v_inf:.4e}")
     logger.log(f"Mass divergence: {err_mass:.4e}")
-
     logger.log(f"\n-----------------------------------------------------\n")
-
     summary = {
         'iterations': it,
         'time':       elapsed,
