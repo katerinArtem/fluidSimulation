@@ -41,7 +41,7 @@ ALPHA_P = 0.3
 # --- SOR: оптимальный omega для N×N (5-точечный Лапласиан) ---
 N_PS     = max(NX, NY)
 PS_OMEGA = 2.0 / (1.0 + math.sin(math.pi / N_PS))   # ~1.80(N=32) … 1.99(N=256)
-PS_MAX_ITER = 100        # запас; при оптим. omega хватает ~N итераций
+PS_MAX_ITER = 300        # запас; при оптим. omega хватает ~N итераций
 
 # --- Output ---
 PRINT_EVERY = 100
