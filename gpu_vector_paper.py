@@ -203,7 +203,7 @@ __kernel void copy_bcs_star(
 __kernel void sor_rb(
     __global float* p,
     __global const float* rhs,
-    volatile __global uint* max_d,
+    __global float* d_scratch,
     const float hx2d, const float hy2d, const float omega,
     const int NX, const int NY, const int color)
 {
@@ -220,7 +220,20 @@ __kernel void sor_rb(
     float p_gs = hx2d * (pw + pe) + hy2d * (ps + pn) - rhs[j*NX + i];
     float d = omega * (p_gs - p[j*NX + i]);
     p[j*NX + i] += d;
-    atomic_max(max_d, as_uint(fabs(d)));
+
+    // race-free: d_scratch[j,i] пишется только этим work-item'ом
+    d_scratch[j*NX + i] = fmax(d_scratch[j*NX + i], fabs(d));
+}
+
+__kernel void reduce_max(
+    __global const float* d_scratch,
+    volatile __global uint* out,
+    const int NX, const int NY)
+{
+    int i = get_global_id(0);
+    int j = get_global_id(1);
+    if (i >= NX || j >= NY) return;
+    atomic_max(out, as_uint(d_scratch[j*NX + i]));
 }
 
 __kernel void compute_div_rhs(
@@ -385,7 +398,6 @@ class GPUSolver:
         self.k_momentum_u   = cl.Kernel(self.prog, 'momentum_u')
         self.k_momentum_v   = cl.Kernel(self.prog, 'momentum_v')
         self.k_copy_bcs_star= cl.Kernel(self.prog, 'copy_bcs_star')
-        self.k_sor_rb       = cl.Kernel(self.prog, 'sor_rb')
         self.k_compute_div  = cl.Kernel(self.prog, 'compute_div_rhs')
         self.k_sub_const    = cl.Kernel(self.prog, 'subtract_const')
         self.k_update_u     = cl.Kernel(self.prog, 'update_u')
@@ -419,7 +431,9 @@ class GPUSolver:
         self.V_SOUTH = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=_V_SOUTH_BC)
         self.V_NORTH = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=_V_NORTH_BC)
 
-        self.max_d_buf   = cl.Buffer(self.ctx, mf.READ_WRITE, 4)
+        self.batch_max_d_buf = cl.Buffer(self.ctx, mf.READ_WRITE, 4)
+        self.d_scratch      = cl.Buffer(self.ctx, mf.READ_WRITE, size_p)
+
         self.max_div_buf = cl.Buffer(self.ctx, mf.READ_WRITE, 4)
         self.res_scratch = cl.Buffer(self.ctx, mf.READ_WRITE, 16)
 
@@ -435,16 +449,47 @@ class GPUSolver:
         self._zeros_1 = np.zeros(1, dtype=np.uint32)
         self._zeros_4 = np.zeros(4, dtype=np.uint32)
 
+        # ============ предварительно настроенный subtract_const ============
+        self.k_sub_const = cl.Kernel(self.prog, 'subtract_const')
+        self.k_sub_const.set_arg(0, self.p_prime)
+        # arg 1 (c) — обновляется в solve_pressure
+        self.k_sub_const.set_arg(2, np.int32(NX))
+        self.k_sub_const.set_arg(3, np.int32(NY))
+
+        # ============ предварительно настроенные SOR-ядра ============
+        hx2d = np.float32((1.0/(HX*HX)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
+        hy2d = np.float32((1.0/(HY*HY)) / (2.0*(1.0/(HX*HX) + 1.0/(HY*HY))))
+        omega = np.float32(PS_OMEGA)
+
+        def _mk_sor(color):
+            k = cl.Kernel(self.prog, 'sor_rb')
+            k.set_arg(0, self.p_prime)
+            k.set_arg(1, self.rhs)
+            k.set_arg(2, self.d_scratch)
+            k.set_arg(3, hx2d)
+            k.set_arg(4, hy2d)
+            k.set_arg(5, omega)
+            k.set_arg(6, np.int32(NX))
+            k.set_arg(7, np.int32(NY))
+            k.set_arg(8, np.int32(color))
+            return k
+        
+        self.k_sor_red   = _mk_sor(0)
+        self.k_sor_black = _mk_sor(1)
+
+        self.k_reduce_max = cl.Kernel(self.prog, 'reduce_max')
+        self.k_reduce_max.set_arg(0, self.d_scratch)
+        self.k_reduce_max.set_arg(1, self.batch_max_d_buf)
+        self.k_reduce_max.set_arg(2, np.int32(NX))
+        self.k_reduce_max.set_arg(3, np.int32(NY))
+
         # предвычисленные константы
         self._inv_hx  = np.float32(1.0 / HX)
         self._inv_hy  = np.float32(1.0 / HY)
         denom = 2.0 * (1.0/(HX*HX) + 1.0/(HY*HY))
         inv_den = 1.0 / denom
-        self._hx2d = np.float32((1.0/(HX*HX)) * inv_den)
-        self._hy2d = np.float32((1.0/(HY*HY)) * inv_den)
         self._rhs_scale = np.float32(RHO / DT)
         self._rhs_coef  = np.float32(self._rhs_scale * inv_den)
-        self._omega     = np.float32(PS_OMEGA)
         self._alpha_u   = np.float32(ALPHA_U)
         self._alpha_p   = np.float32(ALPHA_P)
         self._coeff     = np.float32(DT / RHO)
@@ -533,32 +578,36 @@ class GPUSolver:
         cl.enqueue_copy(self.queue, self.p_prime, self._zeros_p)
 
         ps_iter_used = PS_MAX_ITER
-        # батчированный SOR
+        gsize = (NX, NY)
+
         for k0 in range(0, PS_MAX_ITER, SOR_BATCH):
-            self._reset1(self.max_d_buf)
+            # сброс d_scratch и batch_max_d
+            cl.enqueue_copy(self.queue, self.d_scratch, self._zeros_p)
+            cl.enqueue_copy(self.queue, self.batch_max_d_buf, self._zeros_1)
+
+            # SOR_BATCH итераций red-black — БЕЗ marshal аргументов
             for _ in range(SOR_BATCH):
-                self.k_sor_rb(self.queue, (NX, NY), None,
-                    self.p_prime, self.rhs, self.max_d_buf,
-                    self._hx2d, self._hy2d, self._omega,
-                    self.NXi, self.NYi, np.int32(0))
-                self.k_sor_rb(self.queue, (NX, NY), None,
-                    self.p_prime, self.rhs, self.max_d_buf,
-                    self._hx2d, self._hy2d, self._omega,
-                    self.NXi, self.NYi, np.int32(1))
-            max_diff = self._read1_as_float(self.max_d_buf)
+                cl.enqueue_nd_range_kernel(self.queue, self.k_sor_red,   gsize, None)
+                cl.enqueue_nd_range_kernel(self.queue, self.k_sor_black, gsize, None)
+
+            # одна редукция на батч
+            cl.enqueue_nd_range_kernel(self.queue, self.k_reduce_max, gsize, None)
+
+            # ждём результат (блокирующее чтение 4 байт)
+            raw = np.zeros(1, dtype=np.uint32)
+            cl.enqueue_copy(self.queue, raw, self.batch_max_d_buf)
+            max_diff = float(raw.view(np.float32)[0])
             self.n_sor_syncs += 1
+
             if max_diff < ps_tol_abs:
                 ps_iter_used = k0 + SOR_BATCH
                 break
 
-        # снятие p00: D2H только 4 байта
+        # subtract p00 — читаем 4 байта, обновляем 1 arg, один enqueue
         p00_raw = np.zeros(1, dtype=np.float32)
         cl.enqueue_copy(self.queue, p00_raw, self.p_prime, src_offset=0)
-        self.k_sub_const(
-            self.queue, (NX, NY), None,
-            self.p_prime, np.float32(p00_raw[0]),
-            self.NXi, self.NYi
-        )
+        self.k_sub_const.set_arg(1, np.float32(p00_raw[0]))
+        cl.enqueue_nd_range_kernel(self.queue, self.k_sub_const, gsize, None)
         return ps_iter_used
 
     def correction(self):
