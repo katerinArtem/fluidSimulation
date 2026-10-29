@@ -79,6 +79,17 @@ def apply_bcs(u, v):
 # Момент-предиктор (векторный)
 # =============================================================================
 
+# модульные буферы (только U-часть и V-часть):
+_MU_FS  = np.zeros((NY, NX - 1))
+_MU_FN  = np.zeros((NY, NX - 1))
+_MU_DY  = np.empty((NY, NX - 1))
+_MV_FW  = np.empty((NY - 1, NX))
+_MV_FE  = np.empty((NY - 1, NX))
+_MV_DX  = np.empty((NY - 1, NX))
+_MU_UP_FS = np.empty((NY - 1, NX - 1))
+_MU_UP_FN = np.empty((NY - 1, NX - 1))
+_MU_MSK   = np.empty((NY - 1, NX - 1), dtype=bool)
+
 def momentum_predictor(dt, u, v, p, u_star, v_star):
     inv_hx  = 1.0 / HX
     inv_hy  = 1.0 / HY
@@ -106,14 +117,18 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
     fe = u_e * np.where(u_e > 0.0, Uc, Ue)
 
     # fs: на j=0 нет (стенка). На остальных — upwind по v_s.
-    fs = np.zeros_like(Uc)
-    up_fs = np.where(v_s[1:NY, :] > 0.0, u[0:NY - 1, 1:NX], Uc[1:NY, :])
-    fs[1:NY, :] = v_s[1:NY, :] * up_fs
+    fs = _MU_FS;  fs[:] = 0.0 
+    np.greater(v_s[1:NY, :], 0.0, out=_MU_MSK)              # mask
+    np.copyto(_MU_UP_FS, u[0:NY - 1, 1:NX])                 # default: positive
+    np.copyto(_MU_UP_FS, Uc[1:NY, :], where=~_MU_MSK)       # negative → Uc
+    fs[1:NY, :] = v_s[1:NY, :] * _MU_UP_FS
 
     # fn: на j=NY-1 нет (стенка). На остальных — upwind по v_n.
-    fn = np.zeros_like(Uc)
-    up_fn = np.where(v_n[0:NY - 1, :] > 0.0, Uc[0:NY - 1, :], u[1:NY, 1:NX])
-    fn[0:NY - 1, :] = v_n[0:NY - 1, :] * up_fn
+    fn = _MU_FN;  fn[:] = 0.0
+    np.greater(v_n[0:NY - 1, :], 0.0, out=_MU_MSK)
+    np.copyto(_MU_UP_FN, Uc[0:NY - 1, :])                   # default
+    np.copyto(_MU_UP_FN, u[1:NY, 1:NX], where=~_MU_MSK)
+    fn[0:NY - 1, :] = v_n[0:NY - 1, :] * _MU_UP_FN
 
     conv = -((fe - fw) * inv_hx + (fn - fs) * inv_hy)
 
@@ -123,7 +138,7 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
 
     # diff_y: interior центральная, на стенках — WALL_COEF
     # interior j = 1..NY-2: (u[j-1] - 2*u[j] + u[j+1])
-    diff_y = np.empty_like(Uc)
+    diff_y = _MU_DY
     diff_y[1:NY - 1, :] = (
         u[0:NY - 2, 1:NX]
         - 2.0 * u[1:NY - 1, 1:NX]
@@ -162,13 +177,13 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
     v_n_v = 0.5 * (Vc + Vjp)
 
     # fw: i=0 — стенка, i≥1 — upwind
-    fw_v = np.empty_like(Vc)
+    fw_v = _MV_FW
     fw_v[:, 0]  = u_w_v[:, 0] * _V_WEST_MOM[1:NY]
     fw_v[:, 1:] = u_w_v[:, 1:] * np.where(u_w_v[:, 1:] > 0.0,
                                           Vc[:, 0:NX - 1], Vc[:, 1:])
 
     # fe: i=NX-1 — стенка, i≤NX-2 — upwind
-    fe_v = np.empty_like(Vc)
+    fe_v = _MV_FE
     fe_v[:, 0:NX - 1] = u_e_v[:, 0:NX - 1] * np.where(u_e_v[:, 0:NX - 1] > 0.0,
                                                       Vc[:, 0:NX - 1], Vc[:, 1:NX])
     fe_v[:, NX - 1]   = u_e_v[:, NX - 1] * _V_EAST_MOM[1:NY]
@@ -182,7 +197,7 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
 
     diff_y_v = (Vjm - 2.0 * Vc + Vjp) * inv_hy2
 
-    diff_x_v = np.empty_like(Vc)
+    diff_x_v = _MV_DX
     diff_x_v[:, 1:NX - 1] = (Vc[:, 0:NX - 2] - 2.0 * Vc[:, 1:NX - 1] + Vc[:, 2:NX]) * inv_hx2
     diff_x_v[:, 0]        = WALL_COEF * (2.0 * _V_WEST_MOM[1:NY] - 3.0 * Vc[:, 0]        + Vc[:, 1])        * inv_hx2
     diff_x_v[:, NX - 1]   = WALL_COEF * (2.0 * _V_EAST_MOM[1:NY] - 3.0 * Vc[:, NX - 1]   + Vc[:, NX - 2])   * inv_hx2
@@ -197,20 +212,65 @@ def momentum_predictor(dt, u, v, p, u_star, v_star):
 # (та же PS_OMEGA и PS_TOL_REL, что в скалярной версии)
 # =============================================================================
 
+_TMP_GS = np.empty((NY, NX))
 
-
-def _gs_update(p, rhs, hx2d, hy2d):
+def _gs_update(p, rhs, hx2d, hy2d, out):
     """Один полу-шаг «чистого» Гаусса–Зейделя по всей сетке (без релаксации).
     Граничные призраки берутся зеркально через np.pad(mode='edge')."""
-    pp = np.pad(p, ((1, 1), (1, 1)), mode='edge')
-    p_l = pp[1:NY + 1, 0:NX]
-    p_r = pp[1:NY + 1, 2:NX + 2]
-    p_d = pp[0:NY,     1:NX + 1]
-    p_u = pp[2:NY + 2, 1:NX + 1]
-    return hx2d * (p_l + p_r) + hy2d * (p_d + p_u) - rhs
+    global _TMP_GS
+    # --- x-компонент в out ---
+    # interior i=1..NX-2:  p[i-1] + p[i+1]
+    np.add(p[:, :-2], p[:, 2:], out=out[:, 1:-1])
+    # i=0   : p_l = p[0] (Neumann), p_r = p[1]
+    out[:, 0]  = p[:, 0] + p[:, 1]
+    # i=NX-1: p_l = p[NX-2],         p_r = p[NX-1] (Neumann)
+    out[:, -1] = p[:, -2] + p[:, -1]
+    out *= hx2d
 
+    # --- y-компонент во временный буфер ---
+    np.add(p[:-2, :], p[2:, :], out=_TMP_GS[1:-1, :])
+    _TMP_GS[0, :]  = p[0, :] + p[1, :]
+    _TMP_GS[-1, :] = p[-2, :] + p[-1, :]
+    _TMP_GS *= hy2d
+
+    out += _TMP_GS
+    out -= rhs
+    return out
+
+
+_RED_SLICES = (
+    (slice(0, None, 2), slice(0, None, 2)),   # (i,j) чёт/чёт
+    (slice(1, None, 2), slice(1, None, 2)),   # (i,j) нечёт/нечёт
+)
+_BLK_SLICES = (
+    (slice(0, None, 2), slice(1, None, 2)),   # (i,j) чёт/нечёт
+    (slice(1, None, 2), slice(0, None, 2)),   # (i,j) нечёт/чёт
+)
+
+_DIFF = np.empty((NY, NX))
+
+def _rb_update(p, p_gs, slices):
+    """Обновить p на указанных цветах и вернуть max|Δ| (то же, что |dlt|.max() в старом коде)."""
+    max_diff = 0.0
+    for js, i_s in slices:
+        d = _DIFF[js, i_s]
+        np.subtract(p_gs[js, i_s], p[js, i_s], out=d)
+        d *= PS_OMEGA
+        p[js, i_s] += d
+        m = float(np.abs(d).max())
+        if m > max_diff:
+            max_diff = m
+    return max_diff
+
+
+_DIV   = np.empty((NY, NX))
+_DIV2  = np.empty((NY, NX))
+_RHS   = np.empty((NY, NX))
+_P_GS  = np.empty((NY, NX))
+_P_PRIME = np.empty((NY, NX))
 
 def solve_pressure_correction(u_star, v_star, dt):
+    global _DIV,_DIV2 
     inv_hx  = 1.0 / HX
     inv_hy  = 1.0 / HY
     inv_hx2 = inv_hx * inv_hx
@@ -218,46 +278,48 @@ def solve_pressure_correction(u_star, v_star, dt):
     denom   = 2.0 * (inv_hx2 + inv_hy2)
     inv_den = 1.0 / denom
     rhs_scale = RHO / dt
+    hx2d = inv_hx2 * inv_den
+    hy2d = inv_hy2 * inv_den
 
-    div = ((u_star[:, 1:NX + 1] - u_star[:, 0:NX]) * inv_hx
-           + (v_star[1:NY + 1, :] - v_star[0:NY, :]) * inv_hy)
+    # ---- div (in-place) ----
+    np.subtract(u_star[:, 1:NX + 1], u_star[:, 0:NX], out=_DIV)
+    _DIV *= inv_hx
+    np.subtract(v_star[1:NY + 1, :], v_star[0:NY, :], out=_DIV2)
+    _DIV2 *= inv_hy
+    _DIV += _DIV2                                    # _DIV = div
 
-    rhs_norm = np.max(np.abs(div)) * rhs_scale
+
+    # ---- норма rhs и допуск ----
+    np.abs(_DIV, out=_TMP_GS)                 # _TMP_GS как scratch
+    rhs_norm = float(_TMP_GS.max()) * rhs_scale
     if rhs_norm == 0.0:
         rhs_norm = 1.0
     ps_tol_abs = PS_TOL_REL * rhs_norm
 
-    rhs = (rhs_scale * inv_den) * div
+    # ---- rhs = (rhs_scale * inv_den) * div (in-place) ----
+    np.multiply(_DIV, rhs_scale * inv_den, out=_RHS)
 
-    p = np.zeros((NY, NX))
-
-    jj, ii = np.meshgrid(np.arange(NY), np.arange(NX), indexing='ij')
-    red_mask   = ((ii + jj) % 2) == 0
-    black_mask = ~red_mask
-
-    hx2d = inv_hx2 * inv_den
-    hy2d = inv_hy2 * inv_den
+    # ---- инициализация p' ----
+    p = _P_PRIME
+    p.fill(0.0)
 
     ps_iter_used = PS_MAX_ITER
     for k in range(PS_MAX_ITER):
-        # красный полу-шаг
-        p_gs = _gs_update(p, rhs, hx2d, hy2d)
-        dlt  = np.where(red_mask, PS_OMEGA * (p_gs - p), 0.0)
-        max_diff = np.max(np.abs(dlt))
-        p += dlt
+        # red half-step
+        _gs_update(p, _RHS, hx2d, hy2d, _P_GS)
+        max_diff = _rb_update(p, _P_GS, _RED_SLICES)
 
-        # чёрный полу-шаг
-        p_gs = _gs_update(p, rhs, hx2d, hy2d)
-        dlt  = np.where(black_mask, PS_OMEGA * (p_gs - p), 0.0)
-        d = np.max(np.abs(dlt))
+        # black half-step
+        _gs_update(p, _RHS, hx2d, hy2d, _P_GS)
+        d = _rb_update(p, _P_GS, _BLK_SLICES)
         if d > max_diff:
             max_diff = d
-        p += dlt
 
         if max_diff < ps_tol_abs:
             ps_iter_used = k + 1
             break
 
+    # remove constant (in-place)
     p -= p[0, 0]
     return p, ps_iter_used
 
@@ -309,9 +371,14 @@ def compute_errors_v():
 
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
+_P_UPDATE_TMP = np.empty((NY, NX))
+_GRAD_U = np.empty((NY, NX - 1))
+_UC     = np.empty((NY, NX - 1))
+_GRAD_V = np.empty((NY - 1, NX))
+_VC     = np.empty((NY - 1, NX))
 
 def solve():
-    global U, V, P 
+    global U, V, P, _P_UPDATE_TMP ,_GRAD_U,_UC,_GRAD_V,_VC
 
     logger = RunLogger(
         base_dir=BASE,
@@ -371,16 +438,29 @@ def solve():
         if ps_iter_used >= PS_MAX_ITER:
             ps_cap_hits += 1
 
+
         # 3+4+5. Коррекция + релаксация + обновление P
-        grad_u = (p_prime[:, 1:NX] - p_prime[:, 0:NX - 1]) * inv_hx
-        uc = u_star[:, 1:NX] - coeff * grad_u
-        U[:, 1:NX] = alpha_u * uc + one_m_alpha_u * u_old[:, 1:NX]
+        # ---- U ----
+        np.subtract(p_prime[:, 1:NX], p_prime[:, 0:NX - 1], out=_GRAD_U)
+        _GRAD_U *= inv_hx
+        np.multiply(_GRAD_U, coeff, out=_UC)                     # uc = coeff * grad
+        np.subtract(u_star[:, 1:NX], _UC, out=_UC)               # uc = u* - coeff*grad
+        _UC *= alpha_u
+        _UC += one_m_alpha_u * u_old[:, 1:NX]                    # 1 temp от multiply справа
+        U[:, 1:NX] = _UC
 
-        grad_v = (p_prime[1:NY, :] - p_prime[0:NY - 1, :]) * inv_hy
-        vc = v_star[1:NY, :] - coeff * grad_v
-        V[1:NY, :] = alpha_u * vc + one_m_alpha_u * v_old[1:NY, :]
+        # ---- V ----
+        np.subtract(p_prime[1:NY, :], p_prime[0:NY - 1, :], out=_GRAD_V)
+        _GRAD_V *= inv_hy
+        np.multiply(_GRAD_V, coeff, out=_VC)
+        np.subtract(v_star[1:NY, :], _VC, out=_VC)
+        _VC *= alpha_u
+        _VC += one_m_alpha_u * v_old[1:NY, :]
+        V[1:NY, :] = _VC
 
-        P += alpha_p * p_prime
+        # ---- P ----
+        np.multiply(p_prime, alpha_p, out=_P_UPDATE_TMP)
+        P += _P_UPDATE_TMP
 
         # 6. Граничные условия
         apply_bcs(U, V)
